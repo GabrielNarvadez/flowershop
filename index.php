@@ -1,10 +1,64 @@
+<?php
+// Dynamic products bootstrap
+function fetch_products($limit = 12) {
+    // Build absolute URL to products.php so PHP executes it (vs reading raw source)
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $base   = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
+    $src    = $scheme . '://' . $host . ($base ? $base : '') . '/products.php?nocache=' . time();
+
+    $json = false;
+
+    // Prefer file_get_contents if allow_url_fopen is enabled
+    if (ini_get('allow_url_fopen')) {
+        $ctx = stream_context_create([
+            'http' => ['timeout' => 5, 'ignore_errors' => true],
+            'ssl'  => ['verify_peer' => false, 'verify_peer_name' => false],
+        ]);
+        $json = @file_get_contents($src, false, $ctx);
+    }
+
+    // Fallback to cURL
+    if ($json === false && function_exists('curl_init')) {
+        $ch = curl_init($src);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_FOLLOWLOCATION => true,
+        ]);
+        $json = curl_exec($ch);
+        curl_close($ch);
+    }
+
+    $data = @json_decode($json, true);
+    if (!is_array($data) || empty($data['ok'])) return [];
+
+    $items = $data['items'] ?? [];
+    if ($limit && count($items) > $limit) {
+        $items = array_slice($items, 0, $limit);
+    }
+    return $items;
+}
+
+function price_html($p) {
+    if ($p === null || $p === '') return '';
+    $amt = number_format((float)$p, 2);
+    return '<span>₱' . $amt . '</span>';
+}
+
+$dynamicProducts = fetch_products(12); // adjust if your grid shows more
+?>
+
 <!doctype html>
 <html class="no-js" lang="zxx">
 
 <head>
     <meta charset="utf-8">
     <meta http-equiv="x-ua-compatible" content="ie=edge">
-    <title>Fiama - Flower Shop eCommerce HTML Template</title>
+    <title>The Flower Bucket</title>
     <meta name="robots" content="noindex, follow" />
     <meta name="description" content="">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
@@ -66,6 +120,7 @@
                         </div>
                     </div>
                     <div class="col">
+                        <!-- header-options -->
                         <div class="ltn__header-options">
                             <ul>
                                 <li class="d-none">
@@ -169,14 +224,8 @@
                                 <div class="ltn__main-menu">
                                     <ul>
                                         <li class="menu-icon"><a href="#">Home</a>
-                                            <ul>
-                                                <li><a href="index.html">Home Style - 01</a></li>
-                                                <li><a href="index-2.html">Home Style - 02</a></li>
-                                                <li><a href="index-3.html">Home Style - 03</a></li>
-                                                <li><a href="index-4.html">Home Style - 04</a></li>
-                                            </ul>
                                         </li>
-                                        <li class="menu-icon"><a href="#">Pages</a>
+                                        <li class="menu-icon"><a href="shop.html">Products</a>
                                             <ul class="mega-menu">
                                                 <li><a href="#">Inner Pages</a>
                                                     <ul>
@@ -204,52 +253,9 @@
                                                         <li><a href="product-details.html">Shop details </a></li>
                                                     </ul>
                                                 </li>
-                                                <li><a href="#">Blog Pages</a>
-                                                    <ul>
-                                                        <li><a href="blog.html">News</a></li>
-                                                        <li><a href="blog-grid.html">News Grid</a></li>
-                                                        <li><a href="blog-left-sidebar.html">News Left sidebar</a></li>
-                                                        <li><a href="blog-right-sidebar.html">News Right sidebar</a></li>
-                                                        <li><a href="blog-details.html">News details</a></li>
-                                                    </ul>
-                                                </li>
                                             </ul>
                                         </li>
-                                        <li class="menu-icon"><a href="#">Shop</a>
-                                            <ul>
-                                                <li><a href="shop.html">Shop</a></li>
-                                                <li><a href="shop-grid.html">Shop Grid</a></li>
-                                                <li><a href="shop-left-sidebar.html">Shop Left sidebar</a></li>
-                                                <li><a href="shop-right-sidebar.html">Shop right sidebar</a></li>
-                                                <li><a href="product-details.html">Shop details </a></li>
-                                                <li><a href="#">Other Pages <span class="float-right">>></span></a>
-                                                    <ul>
-                                                        <li><a href="cart.html">Cart</a></li>
-                                                        <li><a href="wishlist.html">Wishlist</a></li>
-                                                        <li><a href="checkout.html">Checkout</a></li>
-                                                        <li><a href="order-tracking.html">Order Tracking</a></li>
-                                                        <li><a href="account.html">My Account</a></li>
-                                                        <li><a href="login.html">Sign in</a></li>
-                                                        <li><a href="register.html">Register</a></li>
-                                                    </ul>
-                                                </li>
-                                            </ul>
-                                        </li>
-                                        <li class="menu-icon"><a href="#">Portfolio</a>
-                                            <ul>
-                                                <li><a href="portfolio.html">Portfolio</a></li>
-                                                <li><a href="portfolio-2.html">Portfolio - 02</a></li>
-                                                <li><a href="portfolio-details.html">Portfolio Details</a></li>
-                                            </ul>
-                                        </li>
-                                        <li class="menu-icon"><a href="#">News</a>
-                                            <ul>
-                                                <li><a href="blog.html">News</a></li>
-                                                <li><a href="blog-grid.html">News Grid</a></li>
-                                                <li><a href="blog-left-sidebar.html">News Left sidebar</a></li>
-                                                <li><a href="blog-right-sidebar.html">News Right sidebar</a></li>
-                                                <li><a href="blog-details.html">News details</a></li>
-                                            </ul>
+                                        <li class="menu-icon"><a href="about.php">About</a>
                                         </li>
                                         <li><a href="contact.html">Contact</a></li>
                                     </ul>
@@ -370,15 +376,6 @@
                             <li><a href="register.html">Register</a></li>
                         </ul>
                     </li>
-                    <li><a href="#">News</a>
-                        <ul class="sub-menu">
-                            <li><a href="blog.html">News</a></li>
-                            <li><a href="blog-grid.html">News Grid</a></li>
-                            <li><a href="blog-left-sidebar.html">News Left sidebar</a></li>
-                            <li><a href="blog-right-sidebar.html">News Right sidebar</a></li>
-                            <li><a href="blog-details.html">News details</a></li>
-                        </ul>
-                    </li>
                     <li><a href="#">Pages</a>
                         <ul class="sub-menu">
                             <li><a href="about.html">About Us</a></li>
@@ -439,227 +436,117 @@
 
     <div class="ltn__utilize-overlay"></div>
 
-    <!-- BREADCRUMB AREA START -->
-    <div class="ltn__breadcrumb-area ltn__breadcrumb-area-4 ltn__breadcrumb-color-white---">
-        <div class="container">
-            <div class="row">
-                <div class="col-lg-12">
-                    <div class="ltn__breadcrumb-inner text-center">
-                        <h1 class="ltn__page-title">Our History</h1>
-                        <div class="ltn__breadcrumb-list">
-                            <ul>
-                                <li><a href="index.html">Home</a></li>
-                                <li>Our History</li>
-                            </ul>
+    <!-- SLIDER AREA START (slider-6) -->
+    <div class="ltn__slider-area ltn__slider-3 ltn__slider-6 section-bg-1">
+        <div class="ltn__slide-one-active slick-slide-arrow-1 slick-slide-dots-1 arrow-white---">
+            <!-- ltn__slide-item  -->
+            <div class="ltn__slide-item ltn__slide-item-8 text-color-white---- bg-image bg-overlay-theme-black-80---" data-bs-bg="img/slider/1.jpg">
+                <div class="ltn__slide-item-inner">
+                    <div class="container">
+                        <div class="row">
+                            <div class="col-lg-12 align-self-center">
+                                <div class="slide-item-info">
+                                    <div class="slide-item-info-inner ltn__slide-animation">
+                                        <div class="slide-item-info">
+                                            <div class="slide-item-info-inner ltn__slide-animation">
+                                                <h1 class="slide-title animated ">Fresh Flower</h1>
+                                                <h6 class="slide-sub-title ltn__body-color slide-title-line animated">Natural & Beautiful Flower Here</h6>
+                                                <div class="slide-brief animated">
+                                                    <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore.</p>
+                                                </div>
+                                                <div class="btn-wrapper animated">
+                                                    <a href="service.html" class="theme-btn-1 btn btn-round">Shop Now</a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- <div class="slide-item-img">
+                                    <img src="img/slider/41-1.png" alt="#">
+                                    <span class="call-to-circle-1"></span>
+                                </div> -->
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
+            <!-- ltn__slide-item  -->
+            <div class="ltn__slide-item ltn__slide-item-8 text-color-white---- bg-image bg-overlay-theme-black-80---" data-bs-bg="img/slider/3.jpg">
+                <div class="ltn__slide-item-inner">
+                    <div class="container">
+                        <div class="row">
+                            <div class="col-lg-12 align-self-center">
+                                <div class="slide-item-info">
+                                    <div class="slide-item-info-inner ltn__slide-animation">
+                                        <div class="slide-item-info">
+                                            <div class="slide-item-info-inner ltn__slide-animation">
+                                                <h1 class="slide-title animated ">Fresh Flower</h1>
+                                                <h6 class="slide-sub-title ltn__body-color slide-title-line animated">Natural & Beautiful Flower Here</h6>
+                                                <div class="slide-brief animated">
+                                                    <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore.</p>
+                                                </div>
+                                                <div class="btn-wrapper animated">
+                                                    <a href="service.html" class="theme-btn-1 btn btn-round">Shop Now</a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- <div class="slide-item-img">
+                                    <img src="img/slider/41-1.png" alt="#">
+                                    <span class="call-to-circle-1"></span>
+                                </div> -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!--  -->
         </div>
     </div>
-    <!-- BREADCRUMB AREA END -->
+    <!-- SLIDER AREA END -->
 
-    <!-- OUR HISTORY AREA START -->
-    <div class="ltn__our-history-area pb-100">
+    <!-- FEATURE AREA START ( Feature - 3) -->
+    <div class="ltn__feature-area mt-100 mt--65">
         <div class="container">
             <div class="row">
                 <div class="col-lg-12">
-                    <div class="ltn__our-history-inner">
-                        <div class="ltn__tab-menu text-uppercase">
-                            <div class="nav">
-                                <a data-bs-toggle="tab" href="#liton_tab_2_1">1900</a>
-                                <a class="active show" data-bs-toggle="tab" href="#liton_tab_2_2">1940</a>
-                                <a data-bs-toggle="tab" href="#liton_tab_2_3">2000</a>
-                                <a data-bs-toggle="tab" href="#liton_tab_2_4">2010</a>
-                                <a data-bs-toggle="tab" href="#liton_tab_2_5">2020</a>
-                            </div>
-                        </div>
-                        <div class="tab-content">
-                            <div class="tab-pane fade" id="liton_tab_2_1">
-                                <div class="ltn__product-tab-content-inner">
-                                    <div class="row">
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-img-wrap about-img-left">
-                                                <img src="img/img-slide/12.jpg" alt="Image">
-                                                <div class="ltn__history-icon">
-                                                    <i class="fas fa-award"></i>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-info-wrap">
-                                                <div class="section-title-area ltn__section-title-2">
-                                                    <h6 class="section-subtitle ltn__secondary-color">// Our History</h6>
-                                                    <h1 class="section-title">We Started Our Journey<span>.</span></h1>
-                                                    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore</p>
-                                                </div>
-                        
-                                                <p>Lorem ipsum dolor sit amet, consectetur adipis icing elit, sed do eius mod tempor incididunt ut labore et dolore magna aliqua.</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="tab-pane fade active show" id="liton_tab_2_2">
-                                <div class="ltn__product-tab-content-inner">
-                                    <div class="row">
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-img-wrap about-img-left">
-                                                <img src="img/img-slide/11.jpg" alt="Image">
-                                                <div class="ltn__history-icon">
-                                                    <i class="icon-award"></i>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-info-wrap">
-                                                <div class="section-title-area ltn__section-title-2">
-                                                    <h6 class="section-subtitle ltn__secondary-color">// Get rewards</h6>
-                                                    <h1 class="section-title">It Was An Sweet
-                                                        Journey Time<span>.</span></h1>
-                                                    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore</p>
-                                                </div>
-                        
-                                                <p>Lorem ipsum dolor sit amet, consectetur adipis icing elit, sed do eius mod tempor incididunt ut labore et dolore magna aliqua.</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="tab-pane fade" id="liton_tab_2_3">
-                                <div class="ltn__product-tab-content-inner">
-                                    <div class="row">
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-img-wrap about-img-left">
-                                                <img src="img/img-slide/13.jpg" alt="Image">
-                                                <div class="ltn__history-icon">
-                                                    <i class="fas fa-medal"></i>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-info-wrap">
-                                                <div class="section-title-area ltn__section-title-2">
-                                                    <h6 class="section-subtitle ltn__secondary-color">// Get rewards</h6>
-                                                    <h1 class="section-title">It Was An Sweet
-                                                        Journey Time<span>.</span></h1>
-                                                    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore</p>
-                                                </div>
-                        
-                                                <p>Lorem ipsum dolor sit amet, consectetur adipis icing elit, sed do eius mod tempor incididunt ut labore et dolore magna aliqua.</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="tab-pane fade" id="liton_tab_2_4">
-                                <div class="ltn__product-tab-content-inner">
-                                    <div class="row">
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-img-wrap about-img-left">
-                                                <img src="img/img-slide/12.jpg" alt="Image">
-                                                <div class="ltn__history-icon">
-                                                    <i class="icon-award"></i>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-info-wrap">
-                                                <div class="section-title-area ltn__section-title-2">
-                                                    <h6 class="section-subtitle ltn__secondary-color">// Get rewards</h6>
-                                                    <h1 class="section-title">It Was An Sweet
-                                                        Journey Time<span>.</span></h1>
-                                                    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore</p>
-                                                </div>
-                        
-                                                <p>Lorem ipsum dolor sit amet, consectetur adipis icing elit, sed do eius mod tempor incididunt ut labore et dolore magna aliqua.</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="tab-pane fade" id="liton_tab_2_5">
-                                <div class="ltn__product-tab-content-inner">
-                                    <div class="row">
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-img-wrap about-img-left">
-                                                <img src="img/img-slide/11.jpg" alt="Image">
-                                                <div class="ltn__history-icon">
-                                                    <i class="fas fa-trophy"></i>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div class="col-lg-6 align-self-center">
-                                            <div class="about-us-info-wrap">
-                                                <div class="section-title-area ltn__section-title-2">
-                                                    <h6 class="section-subtitle ltn__secondary-color">// Get rewards</h6>
-                                                    <h1 class="section-title">It Was An Sweet
-                                                        Journey Time<span>.</span></h1>
-                                                    <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore</p>
-                                                </div>
-                        
-                                                <p>Lorem ipsum dolor sit amet, consectetur adipis icing elit, sed do eius mod tempor incididunt ut labore et dolore magna aliqua.</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <!-- OUR HISTORY AREA END -->
-
-    <!-- FEATURE AREA START ( Feature - 6) -->
-    <div class="ltn__feature-area ltn__primary-bg pt-115 pb-90">
-        <div class="container">
-            <div class="row">
-                <div class="col-lg-12">
-                    <div class="section-title-area ltn__section-title-2 text-center">
-                        <h6 class="section-subtitle ltn__secondary-color">//  features  //</h6>
-                        <h1 class="section-title white-color">Why Choose Us<span>.</span></h1>
-                    </div>
-                </div>
-            </div>
-            <div class="row justify-content-center">
-                <div class="col-xl-4 col-sm-6 col-12">
-                    <div class="ltn__feature-item ltn__feature-item-7 ltn__feature-item-7-color-white">
-                        <div class="ltn__feature-icon-title">
+                    <div class="ltn__feature-item-box-wrap ltn__feature-item-box-wrap-2 ltn__border section-bg-6 position-relative">
+                        <div class="ltn__feature-item ltn__feature-item-8">
                             <div class="ltn__feature-icon">
-                                <span><i class="icon-car-parts"></i></span>
+                                <img src="img/icons/svg/8-trolley.svg" alt="#">
                             </div>
-                            <h3><a href="service-details.html">All Kind Brand</a></h3>
+                            <div class="ltn__feature-info">
+                                <h4>Free shipping</h4>
+                                <p>On all orders over $49.00</p>
+                            </div>
                         </div>
-                        <div class="ltn__feature-info">
-                            <p>Lorem ipsum dolor sit ame it, consectetur adipisicing elit, sed do eiusmod te mp or incididunt ut labore.</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-xl-4 col-sm-6 col-12">
-                    <div class="ltn__feature-item ltn__feature-item-7 ltn__feature-item-7-color-white">
-                        <div class="ltn__feature-icon-title">
+                        <div class="ltn__feature-item ltn__feature-item-8">
                             <div class="ltn__feature-icon">
-                                <span><i class="icon-mechanic"></i></span>
+                                <img src="img/icons/svg/9-money.svg" alt="#">
                             </div>
-                            <h3><a href="service-details.html">Brake Fluid Exchange</a></h3>
+                            <div class="ltn__feature-info">
+                                <h4>15 days returns</h4>
+                                <p>Moneyback guarantee</p>
+                            </div>
                         </div>
-                        <div class="ltn__feature-info">
-                            <p>Lorem ipsum dolor sit ame it, consectetur adipisicing elit, sed do eiusmod te mp or incididunt ut labore.</p>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-xl-4 col-sm-6 col-12">
-                    <div class="ltn__feature-item ltn__feature-item-7 ltn__feature-item-7-color-white">
-                        <div class="ltn__feature-icon-title">
+                        <div class="ltn__feature-item ltn__feature-item-8">
                             <div class="ltn__feature-icon">
-                                <span><i class="icon-repair-1"></i></span>
+                                <img src="img/icons/svg/10-credit-card.svg" alt="#">
                             </div>
-                            <h3><a href="service-details.html">Maintenance Package</a></h3>
+                            <div class="ltn__feature-info">
+                                <h4>Secure checkout</h4>
+                                <p>Protected by Paypal</p>
+                            </div>
                         </div>
-                        <div class="ltn__feature-info">
-                            <p>Lorem ipsum dolor sit ame it, consectetur adipisicing elit, sed do eiusmod te mp or incididunt ut labore.</p>
+                        <div class="ltn__feature-item ltn__feature-item-8">
+                            <div class="ltn__feature-icon">
+                                <img src="img/icons/svg/11-gift-card.svg" alt="#">
+                            </div>
+                            <div class="ltn__feature-info">
+                                <h4>Offer & gift here</h4>
+                                <p>On all orders over</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -668,176 +555,213 @@
     </div>
     <!-- FEATURE AREA END -->
 
-    <!-- CALL TO ACTION START (call-to-action-5) -->
-    <div class="call-to-action-area call-to-action-5 bg-image bg-overlay-theme-90 pt-40 pb-25" data-bs-bg="img/bg/13.jpg">
+    <!-- BANNER AREA START -->
+    <div class="ltn__banner-area  mt-80">
         <div class="container">
-            <div class="row">
-                <div class="col-lg-12">
-                    <div class="call-to-action-inner call-to-action-inner-5 text-decoration text-center">
-                        <h2 class="white-color">24/7 Availability, Make <a href="appointment.html">An Appointment</a></h2>
+            <div class="row justify-content-center">
+                <div class="col-lg-4 col-md-6">
+                    <div class="ltn__banner-item">
+                        <div class="ltn__banner-img">
+                            <a href="shop.html"><img src="img/banner/1.jpg" alt="Banner Image"></a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4 col-md-6">
+                    <div class="ltn__banner-item">
+                        <div class="ltn__banner-img">
+                            <a href="shop.html"><img src="img/banner/2.jpg" alt="Banner Image"></a>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4 col-md-6">
+                    <div class="ltn__banner-item">
+                        <div class="ltn__banner-img">
+                            <a href="shop.html"><img src="img/banner/3.jpg" alt="Banner Image"></a>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    <!-- CALL TO ACTION END -->
+    <!-- BANNER AREA END -->
 
-    <!-- BLOG AREA START (blog-4) -->
-    <div class="ltn__blog-area pt-115 pb-90">
+    <!-- PRODUCT AREA START -->
+    <div class="ltn__product-area ltn__product-gutter  pt-65 pb-40">
         <div class="container">
             <div class="row">
                 <div class="col-lg-12">
-                    <div class="section-title-area ltn__section-title-2 text-center">
-                        <h6 class="section-subtitle ltn__secondary-color">// blog & insights</h6>
-                        <h1 class="section-title">News Feeds<span>.</span></h1>
+                    <div class="section-title-area text-center">
+                        <h1 class="section-title section-title-border">new arrival items</h1>
                     </div>
                 </div>
             </div>
-            <div class="row  ltn__blog-slider-one-active slick-arrow-1">
-                <div class="col-lg-12">
-                    <div class="ltn__blog-item ltn__blog-item-4 bg-image" data-bs-bg="img/blog/1.jpg">
-                        <div class="ltn__blog-brief">
-                            <div class="ltn__blog-meta">
-                                <ul>
-                                    <li class="ltn__blog-author">
-                                        <a href="#"><i class="far fa-user"></i>by: Admin</a>
-                                    </li>
-                                    <li class="ltn__blog-tags">
-                                        <a href="#"><i class="fas fa-tags"></i>Services</a>
-                                    </li>
-                                </ul>
-                            </div>
-                            <h3 class="ltn__blog-title"><a href="blog-details.html">Electric Car Maintenance, Servicing & Repairs</a></h3>
-                            <p>Lorem ipsum dolor sit amet, consectet ur adipisicing elit, sed do eiusmod tem por incididunt ut labore et dolore mag na aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.</p>
-                            <div class="ltn__blog-meta-btn">
-                                <div class="ltn__blog-meta">
+            <div class="row justify-content-center">
+                <?php if (!empty($dynamicProducts)): ?>
+                    <?php foreach ($dynamicProducts as $p): 
+                        $id   = htmlspecialchars($p['id'] ?? '');
+                        $name = htmlspecialchars($p['name'] ?? 'Product');
+                        $img  = htmlspecialchars(($p['image_url'] ?? '') ?: 'img/product/placeholder.png');
+                        $priceSpan = price_html($p['price'] ?? null);
+                        $detailsHref = 'product-details.php?id=' . urlencode($id);
+                    ?>
+                    <!-- ltn__product-item -->
+                    <div class="col-lg-3 col-md-4 col-sm-6 col-6">
+                        <div class="ltn__product-item text-center">
+                            <div class="product-img">
+                                <a href="<?= $detailsHref; ?>"><img src="<?= $img; ?>" alt="<?= $name; ?>"></a>
+                                <div class="product-badge">
                                     <ul>
-                                        <li class="ltn__blog-date"><i class="far fa-calendar-alt"></i> June 24, 2020</li>
+                                        <!-- Keep badges empty for now to preserve layout -->
                                     </ul>
                                 </div>
-                                <div class="ltn__blog-btn">
-                                    <a href="blog-details.html">Read more</a>
+                                <div class="product-hover-action product-hover-action-2">
+                                    <ul>
+                                        <li>
+                                            <a href="#" title="Quick View" data-bs-toggle="modal" data-bs-target="#quick_view_modal">
+                                                <i class="icon-magnifier"></i>
+                                            </a>
+                                        </li>
+                                        <li class="add-to-cart">
+                                            <a href="#" title="Add to Cart" data-bs-toggle="modal" data-bs-target="#add_to_cart_modal">
+                                                <span class="cart-text d-none d-xl-block">Add to Cart</span>
+                                                <span class="d-block d-xl-none"><i class="icon-handbag"></i></span>
+                                            </a>
+                                        </li>
+                                        <li>
+                                            <a href="#" title="Quick View" data-bs-toggle="modal" data-bs-target="#quick_view_modal">
+                                                <i class="icon-shuffle"></i>
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="product-info">
+                                <h2 class="product-title"><a href="<?= $detailsHref; ?>"><?= $name; ?></a></h2>
+                                <div class="product-price">
+                                    <?= $priceSpan; ?>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
-                <div class="col-lg-12">
-                    <div class="ltn__blog-item ltn__blog-item-4 bg-image" data-bs-bg="img/blog/2.jpg">
-                        <div class="ltn__blog-brief">
-                            <div class="ltn__blog-meta">
-                                <ul>
-                                    <li class="ltn__blog-author">
-                                        <a href="#"><i class="far fa-user"></i>by: Admin</a>
-                                    </li>
-                                    <li class="ltn__blog-tags">
-                                        <a href="#"><i class="fas fa-tags"></i>Services</a>
-                                    </li>
-                                </ul>
-                            </div>
-                            <h3 class="ltn__blog-title"><a href="blog-details.html">Common Engine Oil Problems and Solutions</a></h3>
-                            <p>Lorem ipsum dolor sit amet, consectet ur adipisicing elit, sed do eiusmod tem por incididunt ut labore et dolore mag na aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.</p>
-                            <div class="ltn__blog-meta-btn">
-                                <div class="ltn__blog-meta">
-                                    <ul>
-                                        <li class="ltn__blog-date"><i class="far fa-calendar-alt"></i> June 24, 2020</li>
-                                    </ul>
-                                </div>
-                                <div class="ltn__blog-btn">
-                                    <a href="blog-details.html">Read more</a>
-                                </div>
-                            </div>
+                    <!-- ltn__product-item -->
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <div class="col-12">
+                        <p class="text-center">No products available right now.</p>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+    <!-- PRODUCT SLIDER AREA END -->
+
+    <!-- BANNER AREA START -->
+    <div class="ltn__banner-area ">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-6">
+                    <div class="ltn__banner-item">
+                        <div class="ltn__banner-img">
+                            <a href="shop.html"><img src="img/banner/6.jpg" alt="Banner Image"></a>
                         </div>
                     </div>
                 </div>
-                <div class="col-lg-12">
-                    <div class="ltn__blog-item ltn__blog-item-4 bg-image" data-bs-bg="img/blog/3.jpg">
-                        <div class="ltn__blog-brief">
-                            <div class="ltn__blog-meta">
-                                <ul>
-                                    <li class="ltn__blog-author">
-                                        <a href="#"><i class="far fa-user"></i>by: Admin</a>
-                                    </li>
-                                    <li class="ltn__blog-tags">
-                                        <a href="#"><i class="fas fa-tags"></i>Services</a>
-                                    </li>
-                                </ul>
-                            </div>
-                            <h3 class="ltn__blog-title"><a href="blog-details.html">How to Prepare for your First Track Day!</a></h3>
-                            <p>Lorem ipsum dolor sit amet, consectet ur adipisicing elit, sed do eiusmod tem por incididunt ut labore et dolore mag na aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.</p>
-                            <div class="ltn__blog-meta-btn">
-                                <div class="ltn__blog-meta">
-                                    <ul>
-                                        <li class="ltn__blog-date"><i class="far fa-calendar-alt"></i> June 24, 2020</li>
-                                    </ul>
-                                </div>
-                                <div class="ltn__blog-btn">
-                                    <a href="blog-details.html">Read more</a>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-lg-12">
-                    <div class="ltn__blog-item ltn__blog-item-4 bg-image" data-bs-bg="img/blog/4.jpg">
-                        <div class="ltn__blog-brief">
-                            <div class="ltn__blog-meta">
-                                <ul>
-                                    <li class="ltn__blog-author">
-                                        <a href="#"><i class="far fa-user"></i>by: Admin</a>
-                                    </li>
-                                    <li class="ltn__blog-tags">
-                                        <a href="#"><i class="fas fa-tags"></i>Services</a>
-                                    </li>
-                                </ul>
-                            </div>
-                            <h3 class="ltn__blog-title"><a href="blog-details.html">The branch of biology that deals with the normal.</a></h3>
-                            <p>Lorem ipsum dolor sit amet, consectet ur adipisicing elit, sed do eiusmod tem por incididunt ut labore et dolore mag na aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.</p>
-                            <div class="ltn__blog-meta-btn">
-                                <div class="ltn__blog-meta">
-                                    <ul>
-                                        <li class="ltn__blog-date"><i class="far fa-calendar-alt"></i> June 24, 2020</li>
-                                    </ul>
-                                </div>
-                                <div class="ltn__blog-btn">
-                                    <a href="blog-details.html">Read more</a>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-lg-12">
-                    <div class="ltn__blog-item ltn__blog-item-4">
-                        <div class="ltn__blog-brief">
-                            <div class="ltn__blog-meta">
-                                <ul>
-                                    <li class="ltn__blog-author">
-                                        <a href="#"><i class="far fa-user"></i>by: Admin</a>
-                                    </li>
-                                    <li class="ltn__blog-tags">
-                                        <a href="#"><i class="fas fa-tags"></i>Services</a>
-                                    </li>
-                                </ul>
-                            </div>
-                            <h3 class="ltn__blog-title"><a href="blog-details.html">How to: Make Your Tires Last Longer</a></h3>
-                            <p>Lorem ipsum dolor sit amet, consectet ur adipisicing elit, sed do eiusmod tem por incididunt ut labore et dolore mag na aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco.</p>
-                            <div class="ltn__blog-meta-btn">
-                                <div class="ltn__blog-meta">
-                                    <ul>
-                                        <li class="ltn__blog-date"><i class="far fa-calendar-alt"></i> June 24, 2020</li>
-                                    </ul>
-                                </div>
-                                <div class="ltn__blog-btn">
-                                    <a href="blog-details.html">Read more</a>
-                                </div>
-                            </div>
+                <div class="col-md-6">
+                    <div class="ltn__banner-item">
+                        <div class="ltn__banner-img">
+                            <a href="shop.html"><img src="img/banner/7.jpg" alt="Banner Image"></a>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    <!-- BLOG AREA END -->
+    <!-- BANNER AREA END -->
+
+    <!-- PRODUCT SLIDER AREA START -->
+    <div class="ltn__product-slider-area ltn__product-gutter  pt-60 pb-40">
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-12">
+                    <div class="section-title-area text-center">
+                        <h1 class="section-title section-title-border">top products</h1>
+                    </div>
+                </div>
+            </div>
+            <div class="row ltn__product-slider-item-four-active slick-arrow-1">
+                <?php if (!empty($dynamicProducts)): ?>
+                    <?php foreach ($dynamicProducts as $p): 
+                        $id   = htmlspecialchars($p['id'] ?? '');
+                        $name = htmlspecialchars($p['name'] ?? 'Product');
+                        $img  = htmlspecialchars(($p['image_url'] ?? '') ?: 'img/product/placeholder.png');
+                        $priceSpan = price_html($p['price'] ?? null);
+                        $detailsHref = 'product-details.php?id=' . urlencode($id);
+                    ?>
+                    <!-- ltn__product-item -->
+                    <div class="col-12">
+                        <div class="ltn__product-item text-center">
+                            <div class="product-img">
+                                <a href="<?= $detailsHref; ?>"><img src="<?= $img; ?>" alt="<?= $name; ?>"></a>
+                                <div class="product-badge">
+                                    <ul><!-- keep empty to preserve spacing --></ul>
+                                </div>
+                                <div class="product-hover-action product-hover-action-2">
+                                    <ul>
+                                        <li>
+                                            <a href="#" title="Quick View" data-bs-toggle="modal" data-bs-target="#quick_view_modal">
+                                                <i class="icon-magnifier"></i>
+                                            </a>
+                                        </li>
+                                        <li class="add-to-cart">
+                                            <a href="#" title="Add to Cart" data-bs-toggle="modal" data-bs-target="#add_to_cart_modal">
+                                                <span class="cart-text d-none d-xl-block">Add to Cart</span>
+                                                <span class="d-block d-xl-none"><i class="icon-handbag"></i></span>
+                                            </a>
+                                        </li>
+                                        <li>
+                                            <a href="#" title="Quick View" data-bs-toggle="modal" data-bs-target="#quick_view_modal">
+                                                <i class="icon-shuffle"></i>
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="product-info">
+                                <h2 class="product-title"><a href="<?= $detailsHref; ?>"><?= $name; ?></a></h2>
+                                <div class="product-price">
+                                    <?= $priceSpan; ?>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- ltn__product-item -->
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <div class="col-12">
+                        <p class="text-center">No products available right now.</p>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+    <!-- PRODUCT SLIDER AREA END -->
+
+    <!-- BANNER AREA START -->
+    <div class="ltn__banner-area ">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-12">
+                    <div class="ltn__banner-item">
+                        <div class="ltn__banner-img">
+                            <a href="shop.html"><img src="img/banner/10.jpg" alt="Banner Image"></a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- BANNER AREA END -->
+
 
     <!-- BRAND LOGO AREA START -->
     <div class="ltn__brand-logo-area  ltn__brand-logo-1 section-bg-1 pt-35 pb-35 plr--5">
@@ -890,14 +814,13 @@
                 <div class="row">
                     <div class="col-xl-2 col-md-6 col-sm-6 col-12">
                         <div class="footer-widget footer-menu-widget clearfix">
-                            <h4 class="footer-title">My Accoout</h4>
+                            <h4 class="footer-title">My Account</h4>
                             <div class="footer-menu">
                                 <ul>
                                     <li><a href="account.html">My account</a></li>
                                     <li><a href="checkout.html">Checkout</a></li>
                                     <li><a href="contact.html">Contact us</a></li>
                                     <li><a href="cart.html">Shopping Cart</a></li>
-                                    <li><a href="wishlist.html">Wishlist</a></li>
                                 </ul>
                             </div>
                         </div>
@@ -909,7 +832,6 @@
                                 <ul>
                                     <li><a href="locations.html">Store Location</a></li>
                                     <li><a href="order-tracking.html">Orders Tracking</a></li>
-                                    <li><a href="product-details.html">Size Guide</a></li>
                                     <li><a href="account.html">My account</a></li>
                                     <li><a href="faq.html">FAQs</a></li>
                                 </ul>
@@ -923,8 +845,6 @@
                                 <ul>
                                     <li><a href="contact.html">Privacy Page</a></li>
                                     <li><a href="about.html">About us</a></li>
-                                    <li><a href="contact.html">Careers</a></li>
-                                    <li><a href="faq.html">Delivery Inforamtion</a></li>
                                     <li><a href="contact.html">Term & Conditions</a></li>
                                 </ul>
                             </div>
@@ -938,7 +858,6 @@
                                     <li><a href="product-details.html">Shipping Policy</a></li>
                                     <li><a href="contact.html">Help & Contact Us</a></li>
                                     <li><a href="account.html">Returns & Refunds</a></li>
-                                    <li><a href="shop.html">Online Stores</a></li>
                                     <li><a href="contact.html">Terms and Conditions</a></li>
                                 </ul>
                             </div>
@@ -946,7 +865,7 @@
                     </div>
                     <div class="col-xl-4 col-md-6 col-sm-6 col-12">
                         <div class="footer-widget footer-about-widget">
-                            <h4 class="footer-title">About Our Shop</h4>
+                            <h4 class="footer-title">About The Flower Bucket</h4>
                             <div class="footer-logo d-none">
                                 <div class="site-logo">
                                     <img src="img/logo.png" alt="Logo">
@@ -1003,7 +922,7 @@
                     <div class="col-md-6 col-12">
                         <div class="footer-copyright-left">
                             <div class="ltn__copyright-design clearfix">
-                                <p>&copy; <span class="current-year"></span> - Just For You</p>
+                                <p>&copy; <span class="current-year"></span> - The Flower Bucket</p>
                             </div>
                         </div>
                     </div>
@@ -1032,8 +951,249 @@
     </footer>
     <!-- FOOTER AREA END -->
 
+    <!-- MODAL AREA START (Quick View Modal) -->
+    <div class="ltn__modal-area ltn__quick-view-modal-area">
+        <div class="modal fade" id="quick_view_modal" tabindex="-1">
+            <div class="modal-dialog modal-lg" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-bs-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                            <!-- <i class="fas fa-times"></i> -->
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                         <div class="ltn__quick-view-modal-inner">
+                             <div class="modal-product-item">
+                                <div class="row">
+                                    <div class="col-lg-6 col-12">
+                                        <div class="modal-product-img">
+                                            <img src="img/product/4.png" alt="#">
+                                        </div>
+                                    </div>
+                                    <div class="col-lg-6 col-12">
+                                        <div class="modal-product-info shop-details-info pl-0">
+                                            <h3>Pink Flower Tree Red</h3>
+                                            <div class="product-price-ratting mb-20">
+                                                <ul>
+                                                    <li>
+                                                        <div class="product-price">
+                                                            <span>$49.00</span>
+                                                            <del>$65.00</del>
+                                                        </div>
+                                                    </li>
+                                                    <li>
+                                                        <div class="product-ratting">
+                                                            <ul>
+                                                                <li><a href="#"><i class="icon-star"></i></a></li>
+                                                                <li><a href="#"><i class="icon-star"></i></a></li>
+                                                                <li><a href="#"><i class="icon-star"></i></a></li>
+                                                                <li><a href="#"><i class="icon-star"></i></a></li>
+                                                                <li><a href="#"><i class="icon-star"></i></a></li>
+                                                                <li class="review-total"> <a href="#"> ( 95 Reviews )</a></li>
+                                                            </ul>
+                                                        </div>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div class="modal-product-brief">
+                                                <p>Lorem ipsum dolor sit amet, consectetur adipisicing elit. Dignissimos repellendus repudiandae incidunt quidem pariatur expedita, quo quis modi tempore non.</p>
+                                            </div>
+                                            <div class="modal-product-meta ltn__product-details-menu-1 mb-20">
+                                                <ul>
+                                                    <li>
+                                                        <div class="ltn__color-widget clearfix">
+                                                            <strong class="d-meta-title">Color</strong>
+                                                            <ul>
+                                                                <li class="theme"><a href="#"></a></li>
+                                                                <li class="green-2"><a href="#"></a></li>
+                                                                <li class="blue-2"><a href="#"></a></li>
+                                                                <li class="white"><a href="#"></a></li>
+                                                                <li class="red"><a href="#"></a></li>
+                                                                <li class="yellow"><a href="#"></a></li>
+                                                            </ul>
+                                                        </div>
+                                                    </li>
+                                                    <li>
+                                                        <div class="ltn__size-widget clearfix mt-25">
+                                                            <strong class="d-meta-title">Size</strong>
+                                                            <ul>
+                                                                <li><a href="#">S</a></li>
+                                                                <li><a href="#">M</a></li>
+                                                                <li><a href="#">L</a></li>
+                                                                <li><a href="#">XL</a></li>
+                                                                <li><a href="#">XXL</a></li>
+                                                            </ul>
+                                                        </div>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div class="ltn__product-details-menu-2 product-cart-wishlist-btn mb-30">
+                                                <ul>
+                                                    <li>
+                                                        <div class="cart-plus-minus">
+                                                            <input type="text" value="02" name="qtybutton" class="cart-plus-minus-box">
+                                                        </div>
+                                                    </li>
+                                                    <li>
+                                                        <a href="#" class="theme-btn-1 btn btn-effect-1 d-add-to-cart" title="Add to Cart" data-bs-toggle="modal" data-bs-target="#add_to_cart_modal">
+                                                            <span>ADD TO CART</span>
+                                                        </a>
+                                                    </li>
+                                                    <li>
+                                                        <a href="#" class="btn btn-effect-1 d-add-to-wishlist" title="Add to Cart" data-bs-toggle="modal" data-bs-target="#liton_wishlist_modal">
+                                                            <i class="icon-heart"></i>
+                                                        </a>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div class="ltn__social-media mb-30">
+                                                <ul>
+                                                    <li class="d-meta-title">Share:</li>
+                                                    <li><a href="#" title="Facebook"><i class="icon-social-facebook"></i></a></li>
+                                                    <li><a href="#" title="Twitter"><i class="icon-social-twitter"></i></a></li>
+                                                    <li><a href="#" title="Pinterest"><i class="icon-social-pinterest"></i></a></li>
+                                                    <li><a href="#" title="Instagram"><i class="icon-social-instagram"></i></a></li>
+                                                    
+                                                </ul>
+                                            </div>
+                                            <div class="modal-product-meta ltn__product-details-menu-1 mb-30 d-none">
+                                                <ul>
+                                                    <li><strong>SKU:</strong> <span>12345</span></li>
+                                                    <li>
+                                                        <strong>Categories:</strong> 
+                                                        <span>
+                                                            <a href="#">Flower</a>
+                                                        </span>
+                                                    </li>
+                                                    <li>
+                                                        <strong>Tags:</strong> 
+                                                        <span>
+                                                            <a href="#">Love</a>
+                                                            <a href="#">Flower</a>
+                                                            <a href="#">Heart</a>
+                                                        </span>
+                                                    </li>
+                                                </ul>
+                                            </div>
+                                            <div class="ltn__safe-checkout d-none">
+                                                <h5>Guaranteed Safe Checkout</h5>
+                                                <img src="img/icons/payment-2.png" alt="Payment Image">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                             </div>
+                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- MODAL AREA END -->
+
+    <!-- MODAL AREA START (Add To Cart Modal) -->
+    <div class="ltn__modal-area ltn__add-to-cart-modal-area">
+        <div class="modal fade" id="add_to_cart_modal" tabindex="-1">
+            <div class="modal-dialog modal-md" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-bs-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                         <div class="ltn__quick-view-modal-inner">
+                             <div class="modal-product-item">
+                                <div class="row">
+                                    <div class="col-12">
+                                        <div class="modal-add-to-cart-content clearfix">
+                                            <div class="modal-product-img">
+                                                <img src="img/product/1.png" alt="#">
+                                            </div>
+                                             <div class="modal-product-info">
+                                                <h5><a href="product-details.html">Heart's Desire</a></h5>
+                                                <p class="added-cart"><i class="fa fa-check-circle"></i>  Successfully added to your Cart</p>
+                                                <div class="btn-wrapper">
+                                                    <a href="cart.html" class="theme-btn-1 btn btn-effect-1">View Cart</a>
+                                                    <a href="checkout.html" class="theme-btn-2 btn btn-effect-2">Checkout</a>
+                                                </div>
+                                             </div>
+                                        </div>
+                                         <!-- additional-info -->
+                                         <div class="additional-info d-none--">
+                                            <p>We want to give you <b>10% discount</b> for your first order, <br>  Use (fiama10) discount code at checkout</p>
+                                            <div class="payment-method">
+                                                <img src="img/icons/payment.png" alt="#">
+                                            </div>
+                                         </div>
+                                    </div>
+                                </div>
+                             </div>
+                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- MODAL AREA END -->
+
+    <!-- MODAL AREA START (Wishlist Modal) -->
+    <div class="ltn__modal-area ltn__add-to-cart-modal-area">
+        <div class="modal fade" id="liton_wishlist_modal" tabindex="-1">
+            <div class="modal-dialog modal-md" role="document">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <button type="button" class="close" data-bs-dismiss="modal" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                    </div>
+                    <div class="modal-body">
+                         <div class="ltn__quick-view-modal-inner">
+                             <div class="modal-product-item">
+                                <div class="row">
+                                    <div class="col-12">
+                                        <div class="modal-product-img">
+                                            <img src="img/product/7.png" alt="#">
+                                        </div>
+                                         <div class="modal-product-info">
+                                            <h5><a href="product-details.html">Brake Conversion Kit</a></h5>
+                                            <p class="added-cart"><i class="fa fa-check-circle"></i>  Successfully added to your Wishlist</p>
+                                            <div class="btn-wrapper">
+                                                <a href="wishlist.html" class="theme-btn-1 btn btn-effect-1">View Wishlist</a>
+                                            </div>
+                                         </div>
+                                         <!-- additional-info -->
+                                         <div class="additional-info d-none">
+                                            <p>We want to give you <b>10% discount</b> for your first order, <br>  Use discount code at checkout</p>
+                                            <div class="payment-method">
+                                                <img src="img/icons/payment.png" alt="#">
+                                            </div>
+                                         </div>
+                                    </div>
+                                </div>
+                             </div>
+                         </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- MODAL AREA END -->
+
 </div>
 <!-- Body main wrapper end -->
+
+    <!-- preloader area start -->
+    <div class="preloader d-none" id="preloader">
+        <div class="preloader-inner">
+            <div class="spinner">
+                <div class="dot1"></div>
+                <div class="dot2"></div>
+            </div>
+        </div>
+    </div>
+    <!-- preloader area end -->
 
     <!-- All JS Plugins -->
     <script src="js/plugins.js"></script>
@@ -1042,4 +1202,3 @@
   
 </body>
 </html>
-
