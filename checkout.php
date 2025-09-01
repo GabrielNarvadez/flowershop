@@ -1,132 +1,376 @@
+<?php
+// checkout.php — Creates Contact + COrder in EspoCRM and links products, using the right-side order builder.
+// Works without login (session-only cart).
+
+declare(strict_types=1);
+session_start();
+
+// ----------------- CONFIG -----------------
+const ESPO_BASE   = 'https://ecom.flyhubdigital.com/api/v1';
+const ESPO_APIKEY = '7077c399cb6831c2eb97526398fe15cb'; // <-- keep secret
+const CURRENCY    = '₱'; // purely cosmetic here
+
+// ----------------- HELPERS -----------------
+function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
+
+function http_json(string $method, string $path, array $payload = null, array $headers = []) : array {
+    $url = rtrim(ESPO_BASE, '/') . '/' . ltrim($path, '/');
+    $ch = curl_init($url);
+    $hdr = array_merge([
+        'Content-Type: application/json',
+        'Accept: application/json',
+        'X-Api-Key: ' . ESPO_APIKEY,
+    ], $headers);
+
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CUSTOMREQUEST  => strtoupper($method),
+        CURLOPT_TIMEOUT        => 15,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_HTTPHEADER     => $hdr,
+        CURLOPT_SSL_VERIFYPEER => true,
+        CURLOPT_SSL_VERIFYHOST => 2,
+    ]);
+    if ($payload !== null) {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    }
+    $raw = curl_exec($ch);
+    $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err  = curl_error($ch);
+    curl_close($ch);
+
+    $json = json_decode((string)$raw, true);
+    return [
+        'ok'   => ($http >= 200 && $http < 300),
+        'http' => $http,
+        'data' => is_array($json) ? $json : [],
+        'raw'  => $raw,
+        'err'  => $err,
+        'url'  => $url,
+    ];
+}
+
+function fetch_products(): array {
+    // Same loader pattern you are using on index.php
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $base   = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
+    $src    = $scheme . '://' . $host . ($base ? $base : '') . '/products.php?nocache=' . time();
+
+    $json = false;
+    if (ini_get('allow_url_fopen')) {
+        $ctx = stream_context_create([
+            'http' => ['timeout' => 5, 'ignore_errors' => true],
+            'ssl'  => ['verify_peer' => false, 'verify_peer_name' => false],
+        ]);
+        $json = @file_get_contents($src, false, $ctx);
+    }
+    if ($json === false && function_exists('curl_init')) {
+        $ch = curl_init($src);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 3,
+            CURLOPT_TIMEOUT => 5,
+            CURLOPT_SSL_VERIFYPEER => false,
+            CURLOPT_SSL_VERIFYHOST => false,
+            CURLOPT_FOLLOWLOCATION => true,
+        ]);
+        $json = curl_exec($ch);
+        curl_close($ch);
+    }
+    $data = @json_decode($json, true);
+    if (!is_array($data) || empty($data['ok'])) return [];
+    return $data['items'] ?? [];
+}
+
+function catalog_indexed(): array {
+    static $map = null;
+    if ($map !== null) return $map;
+    $map = [];
+    foreach (fetch_products() as $p) {
+        $id = (string)($p['id'] ?? '');
+        if ($id === '') continue;
+        $map[$id] = $p;
+    }
+    return $map;
+}
+
+// If your store product IDs differ from Espo Product IDs, map here.
+function mapStoreIdToEspoProductId(string $storeId): string {
+    // Default: assume same id
+    return $storeId;
+}
+
+// Safe number
+function n($v){ return (float)preg_replace('/[^0-9.\-]/','',(string)$v); }
+
+// ----------------- ESP0 ACTIONS -----------------
+function espo_create_contact(array $input): array {
+    // Minimal fields as per your curl sample
+    $payload = [
+        'firstName' => $input['first_name'] ?? '',
+        'lastName'  => $input['last_name']  ?? '',
+        'email'     => $input['email']      ?? '',
+        'phoneNumber' => $input['phone']    ?? null,
+        'source'    => 'website-checkout',
+    ];
+    return http_json('POST', 'Contact', $payload);
+}
+
+function espo_create_order(array $order): array {
+    // Create COrder with basic fields. Adjust fields as your COrder entity defines.
+    $payload = [
+        'name'        => $order['name'] ?? ('Web Order ' . date('Y-m-d H:i')),
+        'status'      => 'New',
+        'currency'    => $order['currency'] ?? 'PHP',
+        'subtotal'    => $order['subtotal'] ?? 0,
+        'tax'         => $order['vat'] ?? 0,
+        'shippingCost'=> $order['shipping'] ?? 0,
+        'total'       => $order['total'] ?? 0,
+
+        // Billing/shipping fields (rename if your COrder uses different names)
+        'billingAddressStreet'  => $order['address1'] ?? '',
+        'billingAddressCity'    => $order['city'] ?? '',
+        'billingAddressState'   => $order['state'] ?? '',
+        'billingAddressPostalCode' => $order['zip'] ?? '',
+        'billingAddressCountry' => $order['country'] ?? '',
+        'description'           => $order['notes'] ?? '',
+    ];
+
+    return http_json('POST', 'COrder', $payload);
+}
+
+function espo_set_order_contact(string $orderId, string $contactId): bool {
+    // Try 1: set contactId field (if present)
+    $r = http_json('PATCH', 'COrder/' . rawurlencode($orderId), ['contactId' => $contactId]);
+    if ($r['ok']) return true;
+
+    // Try 2: link name 'contact' (many-to-one)
+    $r = http_json('POST', 'COrder/' . rawurlencode($orderId) . '/contact', ['id' => $contactId]);
+    if ($r['ok']) return true;
+
+    // Try 3: link name 'contacts' (many-to-many)
+    $r = http_json('POST', 'COrder/' . rawurlencode($orderId) . '/contacts', ['id' => $contactId]);
+    return $r['ok'];
+}
+
+function espo_link_product_to_order(string $orderId, string $productId): bool {
+    // Common link on many installs is 'products'
+    $r = http_json('POST', 'COrder/' . rawurlencode($orderId) . '/products', ['id' => $productId]);
+    return $r['ok'];
+}
+
+// ----------------- SUBMIT HANDLER -----------------
+$flash = ['type' => null, 'msg' => null, 'details' => null];
+
+if (($_POST['action'] ?? '') === 'place_order') {
+    // 1) Gather form
+    $first = trim($_POST['first_name'] ?? '');
+    $last  = trim($_POST['last_name']  ?? '');
+    $email = trim($_POST['email']      ?? '');
+    $phone = trim($_POST['phone']      ?? '');
+    $country = trim($_POST['country']  ?? '');
+    $address1 = trim($_POST['address1']?? '');
+    $address2 = trim($_POST['address2']?? '');
+    $city  = trim($_POST['city']       ?? '');
+    $state = trim($_POST['state']      ?? '');
+    $zip   = trim($_POST['zip']        ?? '');
+    $notes = trim($_POST['notes']      ?? '');
+
+    // 2) Parse items (from builder). If empty, fallback to session cart.
+    $lines = [];
+    $posted = json_decode($_POST['order_json'] ?? '[]', true);
+    if (isset($posted['items']) && is_array($posted['items'])) {
+        $lines = $posted['items'];
+    }
+
+    if (!$lines && !empty($_SESSION['cart'])) {
+        foreach ($_SESSION['cart'] as $row) {
+            $lines[] = [
+                'id'    => (string)$row['id'],
+                'qty'   => (int)$row['qty'],
+                'price' => (float)$row['price'],
+            ];
+        }
+    }
+
+    // Basic validation
+    if (!$first || !$last || (!$email && !$phone)) {
+        $flash = ['type' => 'error', 'msg' => 'Please provide first name, last name, and at least an email or phone.'];
+    } elseif (!$lines) {
+        $flash = ['type' => 'error', 'msg' => 'Your order has no items. Please add products.'];
+    } else {
+        // 3) Re-price on the server for safety using catalog
+        $catalog = catalog_indexed();
+        $subtotal = 0.0;
+        $itemsForCrm = [];
+
+        foreach ($lines as $ln) {
+            $sid = (string)($ln['id'] ?? '');
+            $qty = (int)($ln['qty'] ?? 0);
+            if ($sid === '' || $qty <= 0) continue;
+
+            $cat = $catalog[$sid] ?? null;
+            $price = $cat ? (float)($cat['price'] ?? 0) : (float)($ln['price'] ?? 0);
+            $line = $price * $qty;
+            $subtotal += $line;
+
+            $itemsForCrm[] = [
+                'storeId'   => $sid,
+                'crmProdId' => mapStoreIdToEspoProductId($sid),
+                'qty'       => $qty,
+                'price'     => $price,
+            ];
+        }
+
+        $vat      = round($subtotal * 0.12, 2);
+        $shipping = 0.00; // adjust if you have rules
+        $total    = round($subtotal + $vat + $shipping, 2);
+
+        if (!$itemsForCrm) {
+            $flash = ['type' => 'error', 'msg' => 'No valid items to submit.'];
+        } else {
+            // 4) Create/Upsert Contact
+            $cRes = espo_create_contact([
+                'first_name' => $first,
+                'last_name'  => $last,
+                'email'      => $email,
+                'phone'      => $phone,
+            ]);
+
+            if (!$cRes['ok']) {
+                $flash = ['type' => 'error', 'msg' => 'Failed to create contact in CRM.', 'details' => $cRes['raw']];
+            } else {
+                $contactId = (string)($cRes['data']['id'] ?? '');
+                // 5) Create Order
+                $oRes = espo_create_order([
+                    'name'      => 'Web Order ' . date('Y-m-d H:i:s'),
+                    'subtotal'  => $subtotal,
+                    'vat'       => $vat,
+                    'shipping'  => $shipping,
+                    'total'     => $total,
+                    'currency'  => 'PHP',
+                    'address1'  => $address1 . ($address2 ? (' ' . $address2) : ''),
+                    'city'      => $city,
+                    'state'     => $state,
+                    'zip'       => $zip,
+                    'country'   => $country,
+                    'notes'     => $notes,
+                ]);
+
+                if (!$oRes['ok']) {
+                    $flash = ['type' => 'error', 'msg' => 'Failed to create order in CRM.', 'details' => $oRes['raw']];
+                } else {
+                    $orderId = (string)($oRes['data']['id'] ?? '');
+
+                    // 6) Link Contact to Order
+                    $linkedContact = $contactId ? espo_set_order_contact($orderId, $contactId) : false;
+
+                    // 7) Link Products to Order
+                    $prodLinksOk = true;
+                    foreach ($itemsForCrm as $it) {
+                        $pid = $it['crmProdId'];
+                        if (!$pid) continue;
+                        if (!espo_link_product_to_order($orderId, $pid)) {
+                            $prodLinksOk = false;
+                        }
+                    }
+
+                    // Optional: clear session cart on success
+                    // $_SESSION['cart'] = [];
+
+                    if ($orderId) {
+                        $flash = [
+                            'type' => 'success',
+                            'msg'  => 'Order placed! CRM Order ID: ' . h($orderId) .
+                                      ($linkedContact ? '' : ' (contact link pending)') .
+                                      ($prodLinksOk ? '' : ' (some products not linked)'),
+                        ];
+                    } else {
+                        $flash = ['type' => 'error', 'msg' => 'Order created but missing CRM ID.'];
+                    }
+                }
+            }
+        }
+    }
+}
+?>
 <!doctype html>
 <html class="no-js" lang="zxx">
-
 <head>
     <meta charset="utf-8">
     <meta http-equiv="x-ua-compatible" content="ie=edge">
-    <title>Fiama - Flower Shop eCommerce HTML Template</title>
+    <title>Checkout</title>
     <meta name="robots" content="noindex, follow" />
-    <meta name="description" content="">
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
 
-    <!-- Place favicon.png in the root directory -->
     <link rel="shortcut icon" href="img/favicon.png" type="image/x-icon" />
-    <!-- Font Icons css -->
     <link rel="stylesheet" href="css/font-icons.css">
-    <!-- plugins css -->
     <link rel="stylesheet" href="css/plugins.css">
-    <!-- Main Stylesheet -->
     <link rel="stylesheet" href="css/style.css">
-    <!-- Responsive css -->
     <link rel="stylesheet" href="css/responsive.css">
 </head>
-
 <body>
-    <!--[if lte IE 9]>
-        <p class="browserupgrade">You are using an <strong>outdated</strong> browser. Please <a href="https://browsehappy.com/">upgrade your browser</a> to improve your experience and security.</p>
-    <![endif]-->
-
-    <!-- Add your site or application content here -->
-
-<!-- Body main wrapper start -->
 <div class="body-wrapper">
 
-    <!-- HEADER AREA START (header-3) -->
     <?php include 'partials/nav.php';?>
 
-    <!-- WISHLIST AREA START -->
     <div class="ltn__checkout-area mb-100">
         <div class="container">
-            <div class="row">
-                <div class="col-lg-12">
-                    <div class="ltn__checkout-inner">
-                        <div class="ltn__checkout-single-content ltn__returning-customer-wrap d-none">
-                            <h5>Returning customer? <a class="ltn__secondary-color" href="#ltn__returning-customer-login" data-bs-toggle="collapse">Click here to login</a></h5>
-                            <div id="ltn__returning-customer-login" class="collapse ltn__checkout-single-content-info">
-                                <div class="ltn_coupon-code-form ltn__form-box">
-                                    <p>Please login your accont.</p>
-                                    <form action="#" >
-                                        <div class="row">
-                                            <div class="col-md-6">
-                                                <div class="input-item input-item-name ltn__custom-icon">
-                                                    <input type="text" name="ltn__name" placeholder="Enter your name">
-                                                </div>
-                                            </div>
-                                            <div class="col-md-6">
-                                                <div class="input-item input-item-email ltn__custom-icon">
-                                                    <input type="email" name="ltn__email" placeholder="Enter email address">
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <button class="btn theme-btn-1 btn-effect-1 text-uppercase">Login</button>
-                                        <label class="input-info-save mb-0"><input type="checkbox" name="agree"> Remember me</label>
-                                        <p class="mt-30"><a href="register.html">Lost your password?</a></p>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="ltn__checkout-single-content ltn__coupon-code-wrap d-none">
-                            <h5>Have a coupon? <a class="ltn__secondary-color" href="#ltn__coupon-code" data-bs-toggle="collapse">Click here to enter your code</a></h5>
-                            <div id="ltn__coupon-code" class="collapse ltn__checkout-single-content-info">
-                                <div class="ltn__coupon-code-form">
-                                    <p>If you have a coupon code, please apply it below.</p>
-                                    <form action="#" >
-                                        <input type="text" name="coupon-code" placeholder="Coupon code">
-                                        <button class="btn theme-btn-2 btn-effect-2 text-uppercase">Apply Coupon</button>
-                                    </form>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="ltn__checkout-single-content mt-50">
-                            <h4 class="title-2">Billing Details</h4>
-                            <div class="ltn__checkout-single-content-info">
-                                <form action="#" >
+            <?php if ($flash['type']): ?>
+                <div class="alert <?php echo $flash['type']==='success'?'alert-success':'alert-danger'; ?>" role="alert">
+                    <?php echo h($flash['msg']); ?>
+                    <?php if (!empty($flash['details'])): ?>
+                        <details class="mt-2"><summary>Details</summary><pre style="white-space:pre-wrap;"><?php echo h($flash['details']); ?></pre></details>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <form id="checkout-form" method="post" action="checkout.php" novalidate>
+                <input type="hidden" name="action" value="place_order">
+                <input type="hidden" name="order_json" id="order-json" value="[]">
+
+                <div class="row">
+                    <div class="col-lg-6">
+                        <div class="ltn__checkout-inner">
+                            <div class="ltn__checkout-single-content mt-0">
+                                <h4 class="title-2">Billing Details</h4>
+                                <div class="ltn__checkout-single-content-info">
                                     <h6>Personal Information</h6>
                                     <div class="row">
                                         <div class="col-md-6">
                                             <div class="input-item input-item-name ltn__custom-icon">
-                                                <input type="text" name="ltn__name" placeholder="First name">
+                                                <input type="text" name="first_name" placeholder="First name" required>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
                                             <div class="input-item input-item-name ltn__custom-icon">
-                                                <input type="text" name="ltn__lastname" placeholder="Last name">
+                                                <input type="text" name="last_name" placeholder="Last name" required>
                                             </div>
                                         </div>
                                         <div class="col-md-6">
                                             <div class="input-item input-item-email ltn__custom-icon">
-                                                <input type="email" name="ltn__email" placeholder="email address">
+                                                <input type="email" name="email" placeholder="Email address">
                                             </div>
                                         </div>
                                         <div class="col-md-6">
                                             <div class="input-item input-item-phone ltn__custom-icon">
-                                                <input type="text" name="ltn__phone" placeholder="phone number">
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="input-item input-item-website ltn__custom-icon">
-                                                <input type="text" name="ltn__company" placeholder="Company name (optional)">
-                                            </div>
-                                        </div>
-                                        <div class="col-md-6">
-                                            <div class="input-item input-item-website ltn__custom-icon">
-                                                <input type="text" name="ltn__phone" placeholder="Company address (optional)">
+                                                <input type="text" name="phone" placeholder="Phone number">
                                             </div>
                                         </div>
                                     </div>
+
                                     <div class="row">
                                         <div class="col-lg-4 col-md-6">
                                             <h6>Country</h6>
                                             <div class="input-item">
-                                                <select class="nice-select">
-                                                    <option>Select Country</option>
+                                                <select class="nice-select" name="country">
+                                                    <option value="">Select Country</option>
+                                                    <option>Philippines</option>
+                                                    <option>United States (US)</option>
+                                                    <option>United Kingdom (UK)</option>
                                                     <option>Australia</option>
                                                     <option>Canada</option>
-                                                    <option>China</option>
-                                                    <option>Morocco</option>
-                                                    <option>Saudi Arabia</option>
-                                                    <option>United Kingdom (UK)</option>
-                                                    <option>United States (US)</option>
                                                 </select>
                                             </div>
                                         </div>
@@ -135,12 +379,12 @@
                                             <div class="row">
                                                 <div class="col-md-6">
                                                     <div class="input-item">
-                                                        <input type="text" placeholder="House number and street name">
+                                                        <input type="text" name="address1" placeholder="House number and street name" required>
                                                     </div>
                                                 </div>
                                                 <div class="col-md-6">
                                                     <div class="input-item">
-                                                        <input type="text" placeholder="Apartment, suite, unit etc. (optional)">
+                                                        <input type="text" name="address2" placeholder="Apartment, suite, unit etc. (optional)">
                                                     </div>
                                                 </div>
                                             </div>
@@ -148,116 +392,119 @@
                                         <div class="col-lg-4 col-md-6">
                                             <h6>Town / City</h6>
                                             <div class="input-item">
-                                                <input type="text" placeholder="City">
+                                                <input type="text" name="city" placeholder="City" required>
                                             </div>
                                         </div>
                                         <div class="col-lg-4 col-md-6">
-                                            <h6>State </h6>
+                                            <h6>State</h6>
                                             <div class="input-item">
-                                                <input type="text" placeholder="State">
+                                                <input type="text" name="state" placeholder="State">
                                             </div>
                                         </div>
                                         <div class="col-lg-4 col-md-6">
                                             <h6>Zip</h6>
                                             <div class="input-item">
-                                                <input type="text" placeholder="Zip">
+                                                <input type="text" name="zip" placeholder="Zip" required>
                                             </div>
                                         </div>
                                     </div>
-                                    <p><label class="input-info-save mb-0"><input type="checkbox" name="agree"> Create an account?</label></p>
+
                                     <h6>Order Notes (optional)</h6>
                                     <div class="input-item input-item-textarea ltn__custom-icon">
-                                        <textarea name="ltn__message" placeholder="Notes about your order, e.g. special notes for delivery."></textarea>
+                                        <textarea name="notes" placeholder="Notes about your order, e.g. special notes for delivery."></textarea>
                                     </div>
+                                </div>
+                            </div>
 
-                                </form>
+                            <div class="ltn__checkout-payment-method mt-40">
+                                <h4 class="title-2">Payment Method</h4>
+                                <div id="checkout_accordion_1">
+                                    <div class="card">
+                                        <h5 class="ltn__card-title" data-bs-toggle="collapse" data-bs-target="#faq-item-2-2" aria-expanded="true">
+                                            Cash on delivery
+                                        </h5>
+                                        <div id="faq-item-2-2" class="collapse show" data-bs-parent="#checkout_accordion_1">
+                                            <div class="card-body">
+                                                <p>Pay with cash upon delivery.</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="ltn__payment-note mt-30 mb-30">
+                                    <p>Your personal data will be used to process your order.</p>
+                                </div>
+                                <button class="btn theme-btn-1 btn-effect-1 text-uppercase" type="submit">Place order</button>
                             </div>
                         </div>
                     </div>
-                </div>
-                <div class="col-lg-6">
-                    <div class="ltn__checkout-payment-method mt-50">
-                        <h4 class="title-2">Payment Method</h4>
-                        <div id="checkout_accordion_1">
-                            <!-- card -->
-                            <div class="card">
-                                <h5 class="collapsed ltn__card-title" data-bs-toggle="collapse" data-bs-target="#faq-item-2-1" aria-expanded="false">
-                                    Check payments
-                                </h5>
-                                <div id="faq-item-2-1" class="collapse" data-bs-parent="#checkout_accordion_1">
-                                    <div class="card-body">
-                                        <p>Please send a check to Store Name, Store Street, Store Town, Store State / County, Store Postcode.</p>
+
+                    <div class="col-lg-6">
+                        <!-- ORDER SUMMARY (product picker + lines) -->
+                        <div class="shoping-cart-total mt-50" id="order-summary">
+                            <h4 class="title-2">Order Summary</h4>
+
+                            <div class="mb-20" style="position:relative;">
+                                <div class="row g-2">
+                                    <div class="col-12 col-md-8" style="position:relative;">
+                                        <input id="product-search" type="text" class="form-control" placeholder="Search products..." autocomplete="off">
+                                        <div id="product-suggestions" class="box-shadow" style="display:none; position:absolute; z-index:9999; background:#fff; width:100%; max-height:260px; overflow:auto; border:1px solid #eee; top:100%; left:0;"></div>
+                                    </div>
+                                    <div class="col-6 col-md-2">
+                                        <input id="product-qty" type="number" min="1" value="1" class="form-control" aria-label="Quantity">
+                                    </div>
+                                    <div class="col-6 col-md-2">
+                                        <button id="add-to-order" type="button" class="theme-btn-1 btn btn-effect-1 w-100" disabled>Add</button>
                                     </div>
                                 </div>
+                                <small class="text-muted d-block mt-1">Type to search, click a suggestion, set qty, then Add.</small>
                             </div>
-                            <!-- card -->
-                            <div class="card">
-                                <h5 class="ltn__card-title" data-bs-toggle="collapse" data-bs-target="#faq-item-2-2" aria-expanded="true"> 
-                                    Cash on delivery 
-                                </h5>
-                                <div id="faq-item-2-2" class="collapse show" data-bs-parent="#checkout_accordion_1">
-                                    <div class="card-body">
-                                        <p>Pay with cash upon delivery.</p>
-                                    </div>
-                                </div>
-                            </div>                          
-                            <!-- card -->
-                            <div class="card">
-                                <h5 class="collapsed ltn__card-title" data-bs-toggle="collapse" data-bs-target="#faq-item-2-3" aria-expanded="false" >
-                                    Card <img src="img/icons/payment-3.png" alt="#">
-                                </h5>
-                                <div id="faq-item-2-3" class="collapse" data-bs-parent="#checkout_accordion_1">
-                                    <div class="card-body">
-                                        <p>Pay via Xendit; you can pay with your credit card if you don’t have a PayPal account.</p>
-                                    </div>
-                                </div>
-                            </div>
+
+                            <table class="table">
+                                <tbody id="order-lines"></tbody>
+                            </table>
                         </div>
-                        <div class="ltn__payment-note mt-30 mb-30">
-                            <p>Your personal data will be used to process your order, support your experience throughout this website, and for other purposes described in our privacy policy.</p>
-                        </div>
-                        <button class="btn theme-btn-1 btn-effect-1 text-uppercase" type="submit">Place order</button>
                     </div>
                 </div>
-                <div class="col-lg-6">
-                <div class="shoping-cart-total mt-50" id="order-summary">
-    <h4 class="title-2">Order Summary</h4>
+            </form>
 
-    <!-- Product picker -->
-    <div class="mb-20" style="position:relative;">
-        <div class="row g-2">
-            <div class="col-12 col-md-8" style="position:relative;">
-                <input id="product-search" type="text" class="form-control" placeholder="Search products..." autocomplete="off">
-                <!-- suggestions -->
-                <div id="product-suggestions" class="box-shadow" style="display:none; position:absolute; z-index:9999; background:#fff; width:100%; max-height:260px; overflow:auto; border:1px solid #eee; top:100%; left:0;">
-                    <!-- filled by JS -->
-                </div>
-            </div>
-            <div class="col-6 col-md-2">
-                <input id="product-qty" type="number" min="1" value="1" class="form-control" aria-label="Quantity">
-            </div>
-            <div class="col-6 col-md-2">
-                <button id="add-to-order" type="button" class="theme-btn-1 btn btn-effect-1 w-100" disabled>Add</button>
-            </div>
         </div>
-        <small id="picker-hint" class="text-muted d-block mt-1">Type to search, click a suggestion, set qty, then Add.</small>
     </div>
 
-    <table class="table">
-        <tbody id="order-lines">
-            <!-- rows and totals injected by JS to preserve layout -->
-        </tbody>
-    </table>
+    <div class="ltn__brand-logo-area  ltn__brand-logo-1 section-bg-1 pt-35 pb-35 plr--5">
+        <div class="container-fluid">
+            <div class="row ltn__brand-logo-active">
+                <div class="col-lg-12"><div class="ltn__brand-logo-item"><img src="img/brand-logo/1.png" alt="Brand Logo"></div></div>
+                <div class="col-lg-12"><div class="ltn__brand-logo-item"><img src="img/brand-logo/2.png" alt="Brand Logo"></div></div>
+                <div class="col-lg-12"><div class="ltn__brand-logo-item"><img src="img/brand-logo/3.png" alt="Brand Logo"></div></div>
+                <div class="col-lg-12"><div class="ltn__brand-logo-item"><img src="img/brand-logo/4.png" alt="Brand Logo"></div></div>
+            </div>
+        </div>
+    </div>
 
-    <input type="hidden" name="order_json" id="order-json" value="[]">
+    <?php include 'partials/footer.php';?>
 </div>
 
+<script src="js/plugins.js"></script>
+<script src="js/main.js"></script>
+
+<!-- Order Summary logic (search, add, totals) -->
 <script>
 (function () {
     const CURRENCY = "₱";
     const VAT_RATE = 0.12;
     const SHIPPING_FLAT = 0;
     const SUGGESTION_LIMIT = 8;
+
+    // 👉 Hardcoded product (edit name/price as needed)
+    const FALLBACK_PRODUCTS = [
+        {
+            id: "68b3e53c35cbfbf5c",
+            name: "Hardcoded Bouquet",
+            price: 1200.00,
+            image_url: "img/product/placeholder.png",
+            is_active: true
+        }
+    ];
 
     const els = {
         search: document.getElementById("product-search"),
@@ -269,15 +516,29 @@
     };
 
     const state = {
-        products: [],
+        // seed with hardcoded product so it always works
+        products: FALLBACK_PRODUCTS.slice(),
         selectedProduct: null,
         cart: []
     };
 
-    // --- Utilities
     const money = n => CURRENCY + Number(n || 0).toFixed(2);
     const safe = s => (s ?? "").toString();
-    const pickable = p => p && !p.deleted && p.is_active && (p.price !== null);
+    const pickable = p => p && p.is_active !== false && (p.price !== null && p.price !== undefined);
+
+    // If your products endpoint starts working again, this will add/merge them
+    function candidateUrls() {
+        const ts = "nocache=" + Date.now();
+        const here = new URL(window.location.href);
+        const sameDir = new URL("products.php?" + ts, here);
+        const root = new URL("/products.php?" + ts, window.location.origin);
+        const baseEl = document.querySelector("base[href]");
+        const fromBase = baseEl ? new URL("products.php?" + ts, baseEl.href) : null;
+        const urls = [sameDir, root];
+        if (fromBase) urls.unshift(fromBase);
+        const seen = new Set();
+        return urls.filter(u => { const k=u.toString(); if (seen.has(k)) return false; seen.add(k); return true; });
+    }
 
     function withTimeout(ms, promise) {
         const ctrl = new AbortController();
@@ -285,31 +546,8 @@
         return promise(ctrl.signal).finally(() => clearTimeout(t));
     }
 
-    // Build several candidate URLs so it works whether the page lives in / or in a subfolder
-    function candidateUrls() {
-        const ts = "nocache=" + Date.now();
-        const here = new URL(window.location.href);
-        const sameDir = new URL("products.php?" + ts, here);
-        const root = new URL("/products.php?" + ts, window.location.origin);
-        // If there is a <base> tag, respect it
-        const baseEl = document.querySelector("base[href]");
-        const fromBase = baseEl ? new URL("products.php?" + ts, baseEl.href) : null;
-
-        const urls = [sameDir, root];
-        if (fromBase) urls.unshift(fromBase);
-        // remove duplicates
-        const seen = new Set();
-        return urls.filter(u => {
-            const k = u.toString();
-            if (seen.has(k)) return false;
-            seen.add(k);
-            return true;
-        });
-    }
-
     async function fetchProducts() {
-        const urls = candidateUrls();
-        for (const u of urls) {
+        for (const u of candidateUrls()) {
             try {
                 const data = await withTimeout(7000, (signal) =>
                     fetch(u.toString(), { credentials: "same-origin", signal }).then(r => r.json())
@@ -317,23 +555,24 @@
                 if (data && data.ok && Array.isArray(data.items)) {
                     return data.items.filter(pickable);
                 }
-            } catch (e) {
-                // try next candidate
-            }
+            } catch (e) {}
         }
         return [];
     }
 
+    function mergeUniqueById(existing, extra) {
+        const byId = new Map(existing.map(p => [String(p.id), p]));
+        extra.forEach(p => { byId.set(String(p.id), p); });
+        return Array.from(byId.values());
+    }
+
     function searchProducts(q) {
-        q = q.trim().toLowerCase();
-        if (!q) return [];
+        q = (q || "").trim().toLowerCase();
+        // 👉 if empty query, show everything (so the hardcoded product appears immediately)
+        if (!q) return state.products.slice(0, SUGGESTION_LIMIT);
         return state.products.filter(p => {
-            const hay = [
-                safe(p.name),
-                safe(p.description),
-                safe(p.category_name),
-                safe(p.sku)
-            ].join(" ").toLowerCase();
+            const hay = [safe(p.id), safe(p.name), safe(p.description), safe(p.category_name), safe(p.sku)]
+                .join(" ").toLowerCase();
             return hay.includes(q);
         }).slice(0, SUGGESTION_LIMIT);
     }
@@ -347,15 +586,14 @@
         const items = list.map(p => {
             const img = safe(p.image_url) || "img/product/placeholder.png";
             const price = money(p.price);
-            const name = safe(p.name);
+            const name = safe(p.name) || p.id;
             return `
                 <button type="button" class="w-100 text-start suggestion-item" data-id="${p.id}"
                         style="display:flex; gap:10px; align-items:center; padding:8px 10px; background:#fff; border:0; border-bottom:1px solid #f1f1f1; cursor:pointer;">
                     <img src="${img}" alt="${name}" style="width:38px;height:38px;object-fit:cover;border-radius:4px;">
                     <span style="flex:1 1 auto; font-size:14px; line-height:1.2;">${name}</span>
                     <span style="white-space:nowrap; font-weight:600;">${price}</span>
-                </button>
-            `;
+                </button>`;
         }).join("");
         els.suggestions.innerHTML = items;
         els.suggestions.style.display = "block";
@@ -365,7 +603,7 @@
         const p = state.products.find(x => String(x.id) === String(id));
         if (!p) return;
         state.selectedProduct = p;
-        els.search.value = p.name;
+        els.search.value = p.name || p.id;
         els.addBtn.disabled = false;
         els.suggestions.style.display = "none";
     }
@@ -376,7 +614,7 @@
         if (!p) return;
         const existing = state.cart.find(i => String(i.id) === String(p.id));
         if (existing) existing.qty += qty;
-        else state.cart.push({ id: p.id, name: p.name, price: Number(p.price || 0), qty });
+        else state.cart.push({ id: p.id, name: p.name || p.id, price: Number(p.price || 0), qty });
         state.selectedProduct = null;
         els.addBtn.disabled = true;
         els.qty.value = 1;
@@ -413,8 +651,7 @@
                         <button type="button" class="btn btn-sm btn-outline-danger ms-2 remove-line" title="Remove">×</button>
                     </td>
                     <td>${money(line)}</td>
-                </tr>
-            `);
+                </tr>`);
         });
 
         const vat = subtotal * VAT_RATE;
@@ -422,22 +659,11 @@
         const total = subtotal + vat + shipping;
 
         rows.push(`
-            <tr>
-                <td>Shipping and Handling</td>
-                <td>${money(shipping)}</td>
-            </tr>
-            <tr>
-                <td>VAT</td>
-                <td>${money(vat)}</td>
-            </tr>
-            <tr>
-                <td><strong>Order Total</strong></td>
-                <td><strong>${money(total)}</strong></td>
-            </tr>
-        `);
+            <tr><td>Shipping and Handling</td><td>${money(shipping)}</td></tr>
+            <tr><td>VAT</td><td>${money(vat)}</td></tr>
+            <tr><td><strong>Order Total</strong></td><td><strong>${money(total)}</strong></td></tr>`);
 
         els.lines.innerHTML = rows.join("");
-
         els.orderJson.value = JSON.stringify({
             items: state.cart.map(i => ({ id: i.id, qty: i.qty, price: i.price })),
             subtotal, vat, shipping, total, currency: CURRENCY
@@ -451,13 +677,14 @@
         els.addBtn.disabled = true;
         clearTimeout(debounce);
         const q = this.value || "";
-        debounce = setTimeout(() => {
-            const list = searchProducts(q);
-            renderSuggestions(list);
-        }, 120);
+        debounce = setTimeout(() => renderSuggestions(searchProducts(q)), 120);
     });
 
-    // Use mousedown so the click still registers if the input loses focus
+    // Show suggestions immediately on focus (so the hardcoded product is visible)
+    els.search.addEventListener("focus", function () {
+        renderSuggestions(searchProducts(els.search.value || ""));
+    });
+
     els.suggestions.addEventListener("mousedown", function (e) {
         const btn = e.target.closest(".suggestion-item");
         if (!btn) return;
@@ -489,86 +716,23 @@
         }
     });
 
-    // --- Init
-    // Show a small loading hint in the suggestions area if user starts typing early
-    els.search.addEventListener("focus", function () {
-        if (!state.products.length && els.search.value.trim().length) {
-            els.suggestions.innerHTML = '<div style="padding:10px;">Loading products...</div>';
-            els.suggestions.style.display = "block";
+    // 1) Preload session cart into builder (unchanged)
+    fetch("cart.php", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "action=get", credentials: "same-origin" })
+      .then(r => r.json()).then(res => {
+        if (res && res.ok && res.cart && Array.isArray(res.cart.items)) {
+            state.cart = res.cart.items.map(i => ({ id: i.id, name: i.name, price: Number(i.price || 0), qty: Number(i.qty || 1) }));
+            renderCart();
         }
-    });
+      }).catch(()=>{});
 
+    // 2) Try to load products; if successful, merge with hardcoded one
     fetchProducts().then(items => {
-        state.products = items;
-        // If the user already typed something, refresh suggestions now
-        if (els.search.value.trim().length) {
-            renderSuggestions(searchProducts(els.search.value));
+        if (Array.isArray(items) && items.length) {
+            state.products = mergeUniqueById(state.products, items.filter(pickable));
         }
     });
 })();
 </script>
 
-                </div>
-            </div>
-        </div>
-    </div>
-    <!-- WISHLIST AREA START -->
-
-    <!-- BRAND LOGO AREA START -->
-    <div class="ltn__brand-logo-area  ltn__brand-logo-1 section-bg-1 pt-35 pb-35 plr--5">
-        <div class="container-fluid">
-            <div class="row ltn__brand-logo-active">
-                <div class="col-lg-12">
-                    <div class="ltn__brand-logo-item">
-                        <img src="img/brand-logo/1.png" alt="Brand Logo">
-                    </div>
-                </div>
-                <div class="col-lg-12">
-                    <div class="ltn__brand-logo-item">
-                        <img src="img/brand-logo/2.png" alt="Brand Logo">
-                    </div>
-                </div>
-                <div class="col-lg-12">
-                    <div class="ltn__brand-logo-item">
-                        <img src="img/brand-logo/3.png" alt="Brand Logo">
-                    </div>
-                </div>
-                <div class="col-lg-12">
-                    <div class="ltn__brand-logo-item">
-                        <img src="img/brand-logo/4.png" alt="Brand Logo">
-                    </div>
-                </div>
-                <div class="col-lg-12">
-                    <div class="ltn__brand-logo-item">
-                        <img src="img/brand-logo/5.png" alt="Brand Logo">
-                    </div>
-                </div>
-                <div class="col-lg-12">
-                    <div class="ltn__brand-logo-item">
-                        <img src="img/brand-logo/1.png" alt="Brand Logo">
-                    </div>
-                </div>
-                <div class="col-lg-12">
-                    <div class="ltn__brand-logo-item">
-                        <img src="img/brand-logo/2.png" alt="Brand Logo">
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    <!-- BRAND LOGO AREA END -->
-
-    <!-- FOOTER AREA START -->
-    <?php include 'partials/footer.php';?>
-    <!-- FOOTER AREA END -->
-</div>
-<!-- Body main wrapper end -->
-
-    <!-- All JS Plugins -->
-    <script src="js/plugins.js"></script>
-    <!-- Main JS -->
-    <script src="js/main.js"></script>
-  
 </body>
 </html>
-
