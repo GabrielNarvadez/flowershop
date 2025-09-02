@@ -1,5 +1,5 @@
 <?php
-// checkout.php — Creates Contact + COrder in EspoCRM and links products, using the right-side order builder.
+// checkout.php - Creates Contact + COrder in EspoCRM and creates CProductOut lines linked to order and product.
 // Works without login (session-only cart).
 
 declare(strict_types=1);
@@ -7,8 +7,8 @@ session_start();
 
 // ----------------- CONFIG -----------------
 const ESPO_BASE   = 'https://ecom.flyhubdigital.com/api/v1';
-const ESPO_APIKEY = '7077c399cb6831c2eb97526398fe15cb'; // <-- keep secret
-const CURRENCY    = '₱'; // purely cosmetic here
+const ESPO_APIKEY = '7077c399cb6831c2eb97526398fe15cb'; // keep secret
+const CURRENCY    = '₱'; // cosmetic only here
 
 // ----------------- HELPERS -----------------
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
@@ -34,7 +34,7 @@ function http_json(string $method, string $path, array $payload = null, array $h
     if ($payload !== null) {
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
     }
-    $raw = curl_exec($ch);
+    $raw  = curl_exec($ch);
     $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     $err  = curl_error($ch);
     curl_close($ch);
@@ -51,7 +51,7 @@ function http_json(string $method, string $path, array $payload = null, array $h
 }
 
 function fetch_products(): array {
-    // Same loader pattern you are using on index.php
+    // Same loader pattern as index.php
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
     $base   = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
@@ -104,60 +104,95 @@ function mapStoreIdToEspoProductId(string $storeId): string {
 // Safe number
 function n($v){ return (float)preg_replace('/[^0-9.\-]/','',(string)$v); }
 
-// ----------------- ESP0 ACTIONS -----------------
+// ----------------- ESPO ACTIONS -----------------
 function espo_create_contact(array $input): array {
-    // Minimal fields as per your curl sample
     $payload = [
-        'firstName' => $input['first_name'] ?? '',
-        'lastName'  => $input['last_name']  ?? '',
-        'email'     => $input['email']      ?? '',
-        'phoneNumber' => $input['phone']    ?? null,
-        'source'    => 'website-checkout',
+        'firstName'    => $input['first_name'] ?? '',
+        'lastName'     => $input['last_name']  ?? '',
+        'emailAddress' => $input['email']      ?? '',
+        'phoneNumber'  => $input['phone']      ?? null,
+        'source'       => 'website-checkout',
     ];
     return http_json('POST', 'Contact', $payload);
 }
 
 function espo_create_order(array $order): array {
-    // Create COrder with basic fields. Adjust fields as your COrder entity defines.
     $payload = [
-        'name'        => $order['name'] ?? ('Web Order ' . date('Y-m-d H:i')),
-        'status'      => 'New',
-        'currency'    => $order['currency'] ?? 'PHP',
-        'subtotal'    => $order['subtotal'] ?? 0,
-        'tax'         => $order['vat'] ?? 0,
-        'shippingCost'=> $order['shipping'] ?? 0,
-        'total'       => $order['total'] ?? 0,
+        'name'          => $order['name'] ?? ('Web Order ' . date('Y-m-d H:i')),
+        'status'        => 'New',
+        'currency'      => $order['currency'] ?? 'PHP',
+        'subtotal'      => $order['subtotal'] ?? 0,
+        'tax'           => $order['vat'] ?? 0,
+        'shippingCost'  => $order['shipping'] ?? 0,
+        'total'         => $order['total'] ?? 0,
 
-        // Billing/shipping fields (rename if your COrder uses different names)
-        'billingAddressStreet'  => $order['address1'] ?? '',
-        'billingAddressCity'    => $order['city'] ?? '',
-        'billingAddressState'   => $order['state'] ?? '',
-        'billingAddressPostalCode' => $order['zip'] ?? '',
-        'billingAddressCountry' => $order['country'] ?? '',
-        'description'           => $order['notes'] ?? '',
+        // Address fields as per your COrder properties
+        'addressCountry' => $order['country'] ?? '',
+        'addressCity'    => $order['city'] ?? '',
+        'addressState'   => $order['state'] ?? '',
+        'cZIP'           => $order['zip'] ?? '',
+
+        // Optional street line if you have one in COrder schema
+        // 'addressStreet' => $order['addressStreet'] ?? '',
+
+        'description'     => $order['notes'] ?? '',
     ];
 
     return http_json('POST', 'COrder', $payload);
 }
 
 function espo_set_order_contact(string $orderId, string $contactId): bool {
-    // Try 1: set contactId field (if present)
+    // Try 1: set contactId field if present
     $r = http_json('PATCH', 'COrder/' . rawurlencode($orderId), ['contactId' => $contactId]);
     if ($r['ok']) return true;
 
-    // Try 2: link name 'contact' (many-to-one)
+    // Try 2: link name 'contact' many-to-one
     $r = http_json('POST', 'COrder/' . rawurlencode($orderId) . '/contact', ['id' => $contactId]);
     if ($r['ok']) return true;
 
-    // Try 3: link name 'contacts' (many-to-many)
+    // Try 3: link name 'contacts' many-to-many
     $r = http_json('POST', 'COrder/' . rawurlencode($orderId) . '/contacts', ['id' => $contactId]);
     return $r['ok'];
 }
 
-function espo_link_product_to_order(string $orderId, string $productId): bool {
-    // Common link on many installs is 'products'
-    $r = http_json('POST', 'COrder/' . rawurlencode($orderId) . '/products', ['id' => $productId]);
-    return $r['ok'];
+// Create line, set product via PATCH, then relate the line from the Order side
+function espo_create_cproductout_and_link(array $item, string $orderId): array {
+    $qty   = (int)($item['qty'] ?? 1);
+    $name  = (string)($item['name'] ?? 'Line');
+    $prodId = (string)($item['crmProdId'] ?? '');
+
+    // 1) Create the CProductOut record
+    // Keep only writable fields based on your metadata
+    $payload = [
+        'name'     => $name . ' x ' . $qty,
+        'quantity' => $qty,
+        // Do not send unitPrice or sKU because they are foreign read-only in your metadata
+    ];
+
+    $create = http_json('POST', 'CProductOut', $payload);
+    if (!$create['ok']) {
+        return ['ok' => false, 'step' => 'create', 'resp' => $create];
+    }
+    $lineId = (string)($create['data']['id'] ?? '');
+    if ($lineId === '') {
+        return ['ok' => false, 'step' => 'create-id-missing', 'resp' => $create];
+    }
+
+    // 2) Set product on the line via PATCH CProductOut/{id}
+    if ($prodId) {
+        $p = http_json('PATCH', 'CProductOut/' . rawurlencode($lineId), ['productId' => $prodId]);
+        if (!$p['ok']) {
+            return ['ok' => false, 'step' => 'patch-product', 'lineId' => $lineId, 'resp' => $p];
+        }
+    }
+
+    // 3) Link the line to the order from the order side, link name productOuts
+    $link = http_json('POST', 'COrder/' . rawurlencode($orderId) . '/productOuts', ['id' => $lineId]);
+    if (!$link['ok']) {
+        return ['ok' => false, 'step' => 'link-from-order', 'lineId' => $lineId, 'resp' => $link];
+    }
+
+    return ['ok' => true, 'lineId' => $lineId];
 }
 
 // ----------------- SUBMIT HANDLER -----------------
@@ -165,20 +200,20 @@ $flash = ['type' => null, 'msg' => null, 'details' => null];
 
 if (($_POST['action'] ?? '') === 'place_order') {
     // 1) Gather form
-    $first = trim($_POST['first_name'] ?? '');
-    $last  = trim($_POST['last_name']  ?? '');
-    $email = trim($_POST['email']      ?? '');
-    $phone = trim($_POST['phone']      ?? '');
-    $country = trim($_POST['country']  ?? '');
-    $address1 = trim($_POST['address1']?? '');
-    $address2 = trim($_POST['address2']?? '');
-    $city  = trim($_POST['city']       ?? '');
-    $state = trim($_POST['state']      ?? '');
-    $zip   = trim($_POST['zip']        ?? '');
-    $notes = trim($_POST['notes']      ?? '');
+    $first    = trim($_POST['first_name'] ?? '');
+    $last     = trim($_POST['last_name']  ?? '');
+    $email    = trim($_POST['email']      ?? '');
+    $phone    = trim($_POST['phone']      ?? '');
+    $country  = trim($_POST['country']    ?? '');
+    $address1 = trim($_POST['address1']   ?? '');
+    $address2 = trim($_POST['address2']   ?? '');
+    $city     = trim($_POST['city']       ?? '');
+    $state    = trim($_POST['state']      ?? '');
+    $zip      = trim($_POST['zip']        ?? '');
+    $notes    = trim($_POST['notes']      ?? '');
 
-    // 2) Parse items (from builder). If empty, fallback to session cart.
-    $lines = [];
+    // 2) Parse items from builder, else fallback to session cart
+    $lines  = [];
     $posted = json_decode($_POST['order_json'] ?? '[]', true);
     if (isset($posted['items']) && is_array($posted['items'])) {
         $lines = $posted['items'];
@@ -200,9 +235,9 @@ if (($_POST['action'] ?? '') === 'place_order') {
     } elseif (!$lines) {
         $flash = ['type' => 'error', 'msg' => 'Your order has no items. Please add products.'];
     } else {
-        // 3) Re-price on the server for safety using catalog
-        $catalog = catalog_indexed();
-        $subtotal = 0.0;
+        // 3) Re-price on the server using catalog
+        $catalog     = catalog_indexed();
+        $subtotal    = 0.0;
         $itemsForCrm = [];
 
         foreach ($lines as $ln) {
@@ -210,9 +245,9 @@ if (($_POST['action'] ?? '') === 'place_order') {
             $qty = (int)($ln['qty'] ?? 0);
             if ($sid === '' || $qty <= 0) continue;
 
-            $cat = $catalog[$sid] ?? null;
+            $cat   = $catalog[$sid] ?? null;
             $price = $cat ? (float)($cat['price'] ?? 0) : (float)($ln['price'] ?? 0);
-            $line = $price * $qty;
+            $line  = $price * $qty;
             $subtotal += $line;
 
             $itemsForCrm[] = [
@@ -220,6 +255,7 @@ if (($_POST['action'] ?? '') === 'place_order') {
                 'crmProdId' => mapStoreIdToEspoProductId($sid),
                 'qty'       => $qty,
                 'price'     => $price,
+                'name'      => $cat['name'] ?? ($ln['name'] ?? $sid),
             ];
         }
 
@@ -230,7 +266,7 @@ if (($_POST['action'] ?? '') === 'place_order') {
         if (!$itemsForCrm) {
             $flash = ['type' => 'error', 'msg' => 'No valid items to submit.'];
         } else {
-            // 4) Create/Upsert Contact
+            // 4) Create Contact
             $cRes = espo_create_contact([
                 'first_name' => $first,
                 'last_name'  => $last,
@@ -242,6 +278,7 @@ if (($_POST['action'] ?? '') === 'place_order') {
                 $flash = ['type' => 'error', 'msg' => 'Failed to create contact in CRM.', 'details' => $cRes['raw']];
             } else {
                 $contactId = (string)($cRes['data']['id'] ?? '');
+
                 // 5) Create Order
                 $oRes = espo_create_order([
                     'name'      => 'Web Order ' . date('Y-m-d H:i:s'),
@@ -250,11 +287,16 @@ if (($_POST['action'] ?? '') === 'place_order') {
                     'shipping'  => $shipping,
                     'total'     => $total,
                     'currency'  => 'PHP',
-                    'address1'  => $address1 . ($address2 ? (' ' . $address2) : ''),
+
+                    // Address values for COrder fields used above
+                    'country'   => $country,
                     'city'      => $city,
                     'state'     => $state,
                     'zip'       => $zip,
-                    'country'   => $country,
+
+                    // If you add addressStreet in espo_create_order, pass it here
+                    // 'addressStreet' => trim($address1 . ($address2 ? (' ' . $address2) : '')),
+
                     'notes'     => $notes,
                 ]);
 
@@ -266,13 +308,18 @@ if (($_POST['action'] ?? '') === 'place_order') {
                     // 6) Link Contact to Order
                     $linkedContact = $contactId ? espo_set_order_contact($orderId, $contactId) : false;
 
-                    // 7) Link Products to Order
-                    $prodLinksOk = true;
+                    // 7) Create CProductOut lines and link them to order and product
+                    $lineCreateOk = true;
+                    $lineErrors = [];
+
                     foreach ($itemsForCrm as $it) {
-                        $pid = $it['crmProdId'];
-                        if (!$pid) continue;
-                        if (!espo_link_product_to_order($orderId, $pid)) {
-                            $prodLinksOk = false;
+                        $r = espo_create_cproductout_and_link($it, $orderId);
+                        if (!$r['ok']) {
+                            $lineCreateOk = false;
+                            $who = $it['crmProdId'] ?? $it['storeId'] ?? 'unknown';
+                            $step = $r['step'] ?? 'unknown';
+                            $http = isset($r['resp']['http']) ? (' http ' . $r['resp']['http']) : '';
+                            $lineErrors[] = $step . ' for ' . $who . $http;
                         }
                     }
 
@@ -282,9 +329,9 @@ if (($_POST['action'] ?? '') === 'place_order') {
                     if ($orderId) {
                         $flash = [
                             'type' => 'success',
-                            'msg'  => 'Order placed! CRM Order ID: ' . h($orderId) .
+                            'msg'  => 'Order placed. CRM Order ID: ' . h($orderId) .
                                       ($linkedContact ? '' : ' (contact link pending)') .
-                                      ($prodLinksOk ? '' : ' (some products not linked)'),
+                                      ($lineCreateOk ? '' : ' (some lines failed: ' . h(implode(', ', $lineErrors)) . ')'),
                         ];
                     } else {
                         $flash = ['type' => 'error', 'msg' => 'Order created but missing CRM ID.'];
@@ -295,6 +342,9 @@ if (($_POST['action'] ?? '') === 'place_order') {
     }
 }
 ?>
+
+
+
 <!doctype html>
 <html class="no-js" lang="zxx">
 <head>
