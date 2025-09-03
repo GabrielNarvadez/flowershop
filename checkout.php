@@ -132,9 +132,6 @@ function espo_create_order(array $order): array {
         'addressState'   => $order['state'] ?? '',
         'cZIP'           => $order['zip'] ?? '',
 
-        // Optional street line if you have one in COrder schema
-        // 'addressStreet' => $order['addressStreet'] ?? '',
-
         'description'     => $order['notes'] ?? '',
     ];
 
@@ -162,11 +159,9 @@ function espo_create_cproductout_and_link(array $item, string $orderId): array {
     $prodId = (string)($item['crmProdId'] ?? '');
 
     // 1) Create the CProductOut record
-    // Keep only writable fields based on your metadata
     $payload = [
         'name'     => $name . ' x ' . $qty,
         'quantity' => $qty,
-        // Do not send unitPrice or sKU because they are foreign read-only in your metadata
     ];
 
     $create = http_json('POST', 'CProductOut', $payload);
@@ -294,9 +289,6 @@ if (($_POST['action'] ?? '') === 'place_order') {
                     'state'     => $state,
                     'zip'       => $zip,
 
-                    // If you add addressStreet in espo_create_order, pass it here
-                    // 'addressStreet' => trim($address1 . ($address2 ? (' ' . $address2) : '')),
-
                     'notes'     => $notes,
                 ]);
 
@@ -329,9 +321,7 @@ if (($_POST['action'] ?? '') === 'place_order') {
                     if ($orderId) {
                         $flash = [
                             'type' => 'success',
-                            'msg'  => 'Order placed. CRM Order ID: ' . h($orderId) .
-                                      ($linkedContact ? '' : ' (contact link pending)') .
-                                      ($lineCreateOk ? '' : ' (some lines failed: ' . h(implode(', ', $lineErrors)) . ')'),
+                            'msg'  => 'Order placed. CRM Order ID: ',
                         ];
                     } else {
                         $flash = ['type' => 'error', 'msg' => 'Order created but missing CRM ID.'];
@@ -342,9 +332,6 @@ if (($_POST['action'] ?? '') === 'place_order') {
     }
 }
 ?>
-
-
-
 <!doctype html>
 <html class="no-js" lang="zxx">
 <head>
@@ -359,6 +346,117 @@ if (($_POST['action'] ?? '') === 'place_order') {
     <link rel="stylesheet" href="css/plugins.css">
     <link rel="stylesheet" href="css/style.css">
     <link rel="stylesheet" href="css/responsive.css">
+
+    <style>
+      /* ---------- Order Summary styles ---------- */
+      #order-summary .card {
+        border: 1px solid #e9ecef;
+        border-radius: .5rem;
+      }
+      #order-summary .card-header {
+        background: #f8f9fa;
+        border-bottom: 1px solid #e9ecef;
+      }
+      /* Search row */
+      .os-search .suggestions {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 1050;
+        background: #fff;
+        border: 1px solid #e9ecef;
+        border-radius: .375rem;
+        box-shadow: 0 6px 24px rgba(0,0,0,.06);
+        max-height: 260px;
+        overflow: auto;
+      }
+      .os-search .suggestions.d-none { display: none; }
+      .os-suggestion {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 8px 10px;
+        border: 0;
+        border-bottom: 1px solid #f3f3f3;
+        background: #fff;
+        cursor: pointer;
+        text-align: left;
+      }
+      .os-suggestion:last-child { border-bottom: 0; }
+      .os-suggestion:hover, .os-suggestion:focus { background: #f9fafb; }
+      .os-suggestion img {
+        width: 38px; height: 38px; object-fit: cover; border-radius: 4px;
+      }
+      .os-suggestion .name { flex: 1 1 auto; font-size: 14px; line-height: 1.2; }
+      .os-suggestion .price { font-weight: 600; white-space: nowrap; }
+
+      /* Table */
+      #order-summary .table thead th {
+        font-weight: 600;
+        border-top: 0;
+        background: #f8f9fa;
+      }
+      #order-summary .qty-input {
+        width: 68px;
+        text-align: center;
+      }
+      #order-summary .remove-line.btn {
+        line-height: 1; padding: .25rem .5rem;
+      }
+      #order-summary tfoot th, #order-summary tfoot td {
+        border-top: 0;
+      }
+      #order-summary tfoot .fw-bold {
+        font-size: 1.05rem;
+      }
+      /* Single-row layout */
+.os-row{
+  display:flex;
+  align-items:stretch;
+  gap:.5rem;
+  flex-wrap:nowrap;      /* keep everything on one line */
+}
+
+/* input-group width so qty doesn't get tiny; tweak to taste */
+.os-qa{ width: 230px; min-width: 230px; }
+@media (max-width: 576px){
+  .os-qa{ width: 200px; min-width: 200px; }
+}
+
+/* (optional) center the number text */
+.os-qa input[type="number"]{ text-align:center; }
+
+/* keep your suggestions styles below (unchanged) */
+
+/* Prevent the qty and button from collapsing */
+.os-qty{ width:92px; text-align:center; }
+.os-add-btn{ white-space:nowrap; min-width:110px; }
+
+/* Suggestions dropdown (uses same class names you already have) */
+.os-search .suggestions{
+  position:absolute;
+  top:100%;
+  left:0;
+  right:0;
+  z-index:1050;
+  background:#fff;
+  border:1px solid #e9ecef;
+  border-radius:.375rem;
+  box-shadow:0 6px 24px rgba(0,0,0,.06);
+  max-height:260px;
+  overflow:auto;
+}
+.os-search .suggestions.d-none{ display:none; }
+.os-suggestion{ display:flex; align-items:center; gap:10px; width:100%; padding:8px 10px; border:0; border-bottom:1px solid #f3f3f3; background:#fff; cursor:pointer; text-align:left; }
+.os-suggestion:last-child{ border-bottom:0; }
+.os-suggestion:hover,.os-suggestion:focus{ background:#f9fafb; }
+.os-suggestion img{ width:38px; height:38px; object-fit:cover; border-radius:4px; }
+.os-suggestion .name{ flex:1 1 auto; font-size:14px; line-height:1.2; }
+.os-suggestion .price{ font-weight:600; white-space:nowrap; }
+
+    </style>
 </head>
 <body>
 <div class="body-wrapper">
@@ -490,28 +588,55 @@ if (($_POST['action'] ?? '') === 'place_order') {
 
                     <div class="col-lg-6">
                         <!-- ORDER SUMMARY (product picker + lines) -->
-                        <div class="shoping-cart-total mt-50" id="order-summary">
-                            <h4 class="title-2">Order Summary</h4>
-
-                            <div class="mb-20" style="position:relative;">
-                                <div class="row g-2">
-                                    <div class="col-12 col-md-8" style="position:relative;">
-                                        <input id="product-search" type="text" class="form-control" placeholder="Search products..." autocomplete="off">
-                                        <div id="product-suggestions" class="box-shadow" style="display:none; position:absolute; z-index:9999; background:#fff; width:100%; max-height:260px; overflow:auto; border:1px solid #eee; top:100%; left:0;"></div>
-                                    </div>
-                                    <div class="col-6 col-md-2">
-                                        <input id="product-qty" type="number" min="1" value="1" class="form-control" aria-label="Quantity">
-                                    </div>
-                                    <div class="col-6 col-md-2">
-                                        <button id="add-to-order" type="button" class="theme-btn-1 btn btn-effect-1 w-100" disabled>Add</button>
-                                    </div>
-                                </div>
-                                <small class="text-muted d-block mt-1">Type to search, click a suggestion, set qty, then Add.</small>
+                        <div id="order-summary" class="mt-50">
+                          <div class="card shadow-sm">
+                            <div class="card-header d-flex align-items-center justify-content-between">
+                              <h4 class="title-2 m-0">Order Summary</h4>
                             </div>
 
-                            <table class="table">
-                                <tbody id="order-lines"></tbody>
-                            </table>
+                            <div class="card-body">
+                            <div class="mb-3 os-search d-none">
+  <label for="product-search" class="form-label">Search products</label>
+
+  <!-- Single row -->
+  <div class="os-row">
+    <!-- Search (flexes to fill) -->
+    <div class="flex-grow-1 position-relative">
+      <input id="product-search" type="text" class="form-control" placeholder="Type to search" autocomplete="off">
+      <div id="product-suggestions" class="suggestions d-none"></div>
+    </div>
+
+    <!-- Qty -->
+<!-- Qty + Add -->
+<div class="input-group os-qa">
+  <input id="product-qty" type="number" min="1" value="1"
+         class="form-control" aria-label="Quantity">
+  <button id="add-to-order" type="button" class="btn btn-primary" disabled>Add</button>
+</div>
+
+  </div>
+
+  <small class="text-muted">Pick a suggestion, set quantity, then Add.</small>
+</div>
+
+
+                              <!-- Lines -->
+                              <div class="table-responsive">
+                                <table class="table align-middle mb-0">
+                                  <thead>
+                                    <tr>
+                                      <th scope="col">Item</th>
+                                      <th scope="col" class="text-center" style="width:110px;">Qty</th>
+                                      <th scope="col" class="text-end" style="width:140px;">Line total</th>
+                                      <th scope="col" class="text-end" style="width:56px;"><span class="visually-hidden">Remove</span></th>
+                                    </tr>
+                                  </thead>
+                                  <tbody id="order-lines"></tbody>
+                                  <tfoot id="order-totals"></tfoot>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                     </div>
                 </div>
@@ -545,7 +670,7 @@ if (($_POST['action'] ?? '') === 'place_order') {
     const SHIPPING_FLAT = 0;
     const SUGGESTION_LIMIT = 8;
 
-    // 👉 Hardcoded product (edit name/price as needed)
+    // Hardcoded product so it always works
     const FALLBACK_PRODUCTS = [
         {
             id: "68b3e53c35cbfbf5c",
@@ -562,11 +687,11 @@ if (($_POST['action'] ?? '') === 'place_order') {
         qty: document.getElementById("product-qty"),
         addBtn: document.getElementById("add-to-order"),
         lines: document.getElementById("order-lines"),
+        totals: document.getElementById("order-totals"),
         orderJson: document.getElementById("order-json")
     };
 
     const state = {
-        // seed with hardcoded product so it always works
         products: FALLBACK_PRODUCTS.slice(),
         selectedProduct: null,
         cart: []
@@ -576,7 +701,6 @@ if (($_POST['action'] ?? '') === 'place_order') {
     const safe = s => (s ?? "").toString();
     const pickable = p => p && p.is_active !== false && (p.price !== null && p.price !== undefined);
 
-    // If your products endpoint starts working again, this will add/merge them
     function candidateUrls() {
         const ts = "nocache=" + Date.now();
         const here = new URL(window.location.href);
@@ -618,7 +742,6 @@ if (($_POST['action'] ?? '') === 'place_order') {
 
     function searchProducts(q) {
         q = (q || "").trim().toLowerCase();
-        // 👉 if empty query, show everything (so the hardcoded product appears immediately)
         if (!q) return state.products.slice(0, SUGGESTION_LIMIT);
         return state.products.filter(p => {
             const hay = [safe(p.id), safe(p.name), safe(p.description), safe(p.category_name), safe(p.sku)]
@@ -627,26 +750,25 @@ if (($_POST['action'] ?? '') === 'place_order') {
         }).slice(0, SUGGESTION_LIMIT);
     }
 
+    function hideSuggestions() {
+        els.suggestions.classList.add("d-none");
+        els.suggestions.innerHTML = "";
+    }
+
     function renderSuggestions(list) {
-        if (!list.length) {
-            els.suggestions.style.display = "none";
-            els.suggestions.innerHTML = "";
-            return;
-        }
-        const items = list.map(p => {
+        if (!list.length) { hideSuggestions(); return; }
+        els.suggestions.innerHTML = list.map(p => {
             const img = safe(p.image_url) || "img/product/placeholder.png";
             const price = money(p.price);
             const name = safe(p.name) || p.id;
             return `
-                <button type="button" class="w-100 text-start suggestion-item" data-id="${p.id}"
-                        style="display:flex; gap:10px; align-items:center; padding:8px 10px; background:#fff; border:0; border-bottom:1px solid #f1f1f1; cursor:pointer;">
-                    <img src="${img}" alt="${name}" style="width:38px;height:38px;object-fit:cover;border-radius:4px;">
-                    <span style="flex:1 1 auto; font-size:14px; line-height:1.2;">${name}</span>
-                    <span style="white-space:nowrap; font-weight:600;">${price}</span>
+                <button type="button" class="os-suggestion suggestion-item" data-id="${p.id}">
+                    <img src="${img}" alt="${name}">
+                    <span class="name">${name}</span>
+                    <span class="price">${price}</span>
                 </button>`;
         }).join("");
-        els.suggestions.innerHTML = items;
-        els.suggestions.style.display = "block";
+        els.suggestions.classList.remove("d-none");
     }
 
     function selectById(id) {
@@ -655,7 +777,7 @@ if (($_POST['action'] ?? '') === 'place_order') {
         state.selectedProduct = p;
         els.search.value = p.name || p.id;
         els.addBtn.disabled = false;
-        els.suggestions.style.display = "none";
+        hideSuggestions();
     }
 
     function addSelectedToCart() {
@@ -684,23 +806,24 @@ if (($_POST['action'] ?? '') === 'place_order') {
     }
 
     function renderCart() {
-        const rows = [];
+        const bodyRows = [];
         let subtotal = 0;
 
         state.cart.forEach(i => {
             const line = (i.price || 0) * (i.qty || 0);
             subtotal += line;
-            rows.push(`
+            bodyRows.push(`
                 <tr data-line="${i.id}">
-                    <td>
-                        ${safe(i.name)} <strong>× 
-                            <input type="number" min="1" value="${i.qty}" aria-label="Quantity"
-                                   style="width:64px; display:inline-block; margin-left:2px;"
-                                   class="form-control form-control-sm line-qty">
-                        </strong>
-                        <button type="button" class="btn btn-sm btn-outline-danger ms-2 remove-line" title="Remove">×</button>
+                    <td class="align-middle">
+                        <div class="fw-medium">${safe(i.name)}</div>
                     </td>
-                    <td>${money(line)}</td>
+                    <td class="text-center align-middle" style="width:110px;">
+                        <input type="number" min="1" value="${i.qty}" aria-label="Quantity" class="form-control form-control-sm qty-input line-qty">
+                    </td>
+                    <td class="text-end align-middle" style="width:140px;">${money(line)}</td>
+                    <td class="text-end align-middle" style="width:56px;">
+                        <button type="button" class="btn btn-outline-danger btn-sm remove-line" title="Remove">&times;</button>
+                    </td>
                 </tr>`);
         });
 
@@ -708,19 +831,31 @@ if (($_POST['action'] ?? '') === 'place_order') {
         const shipping = state.cart.length ? SHIPPING_FLAT : 0;
         const total = subtotal + vat + shipping;
 
-        rows.push(`
-            <tr><td>Shipping and Handling</td><td>${money(shipping)}</td></tr>
-            <tr><td>VAT</td><td>${money(vat)}</td></tr>
-            <tr><td><strong>Order Total</strong></td><td><strong>${money(total)}</strong></td></tr>`);
+        els.lines.innerHTML = bodyRows.join("");
+        els.totals.innerHTML = `
+            <tr>
+                <th colspan="2" class="text-end">Shipping and Handling</th>
+                <td class="text-end">${money(shipping)}</td>
+                <td></td>
+            </tr>
+            <tr>
+                <th colspan="2" class="text-end">VAT</th>
+                <td class="text-end">${money(vat)}</td>
+                <td></td>
+            </tr>
+            <tr class="fw-bold">
+                <th colspan="2" class="text-end">Order Total</th>
+                <td class="text-end">${money(total)}</td>
+                <td></td>
+            </tr>`;
 
-        els.lines.innerHTML = rows.join("");
         els.orderJson.value = JSON.stringify({
             items: state.cart.map(i => ({ id: i.id, qty: i.qty, price: i.price })),
             subtotal, vat, shipping, total, currency: CURRENCY
         });
     }
 
-    // --- Events
+    // Events
     let debounce;
     els.search.addEventListener("input", function () {
         state.selectedProduct = null;
@@ -730,7 +865,6 @@ if (($_POST['action'] ?? '') === 'place_order') {
         debounce = setTimeout(() => renderSuggestions(searchProducts(q)), 120);
     });
 
-    // Show suggestions immediately on focus (so the hardcoded product is visible)
     els.search.addEventListener("focus", function () {
         renderSuggestions(searchProducts(els.search.value || ""));
     });
@@ -744,7 +878,7 @@ if (($_POST['action'] ?? '') === 'place_order') {
 
     document.addEventListener("click", function (e) {
         if (!e.target.closest("#product-suggestions") && !e.target.closest("#product-search")) {
-            els.suggestions.style.display = "none";
+            hideSuggestions();
         }
     });
 
@@ -766,7 +900,7 @@ if (($_POST['action'] ?? '') === 'place_order') {
         }
     });
 
-    // 1) Preload session cart into builder (unchanged)
+    // 1) Preload session cart into builder
     fetch("cart.php", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "action=get", credentials: "same-origin" })
       .then(r => r.json()).then(res => {
         if (res && res.ok && res.cart && Array.isArray(res.cart.items)) {
@@ -775,7 +909,7 @@ if (($_POST['action'] ?? '') === 'place_order') {
         }
       }).catch(()=>{});
 
-    // 2) Try to load products; if successful, merge with hardcoded one
+    // 2) Load products and merge with fallback
     fetchProducts().then(items => {
         if (Array.isArray(items) && items.length) {
             state.products = mergeUniqueById(state.products, items.filter(pickable));

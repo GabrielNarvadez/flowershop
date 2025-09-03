@@ -160,7 +160,7 @@ $total    = $subtotal + $SHIPPING + $vat;
                                 </tbody>
                             </table>
                             <div class="btn-wrapper text-right">
-                                <a href="checkout.html" class="theme-btn-1 btn btn-effect-1">Proceed to checkout</a>
+                                <a href="checkout.php" class="theme-btn-1 btn btn-effect-1">Proceed to checkout</a>
                             </div>
                         </div>
 
@@ -198,7 +198,7 @@ $total    = $subtotal + $SHIPPING + $vat;
 <!-- Main JS -->
 <script src="js/main.js"></script>
 <!-- Cart glue (from previous step) -->
-<script src="cart.js"></script>
+<script src="js/cart.js"></script>
 
 <!-- Page wiring: qty change, remove, clear, live totals -->
 <script>
@@ -336,6 +336,8 @@ $total    = $subtotal + $SHIPPING + $vat;
   document.addEventListener("DOMContentLoaded", refresh);
 })();
 </script>
+
+
 
 </body>
 </html>

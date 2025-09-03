@@ -641,7 +641,7 @@ $dynamicProducts = fetch_products(12); // adjust if your grid shows more
                                                 <h5><a href="product-details.html">Heart's Desire</a></h5>
                                                 <p class="added-cart"><i class="fa fa-check-circle"></i>  Successfully added to your Cart</p>
                                                 <div class="btn-wrapper">
-                                                    <a href="cart.html" class="theme-btn-1 btn btn-effect-1">View Cart</a>
+                                                    <a href="cart-out.php" class="theme-btn-1 btn btn-effect-1">View Cart</a>
                                                     <a href="checkout.html" class="theme-btn-2 btn btn-effect-2">Checkout</a>
                                                 </div>
                                              </div>
@@ -767,7 +767,7 @@ document.addEventListener("DOMContentLoaded", function () {
 </script>
 
   
-  <script src="cart.js"></script>
+  <script src="js/cart.js"></script>
 
 </body>
 </html>
